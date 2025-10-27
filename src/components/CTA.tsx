@@ -18,7 +18,11 @@ const CTA = () => {
           </p>
 
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-12 animate-fade-in" style={{ animationDelay: "0.4s" }}>
-            <Button size="lg" className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-glow-primary text-lg px-8 py-6 group">
+            <Button 
+              size="lg" 
+              onClick={() => window.location.href = '/practice'}
+              className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-glow-primary text-lg px-8 py-6 group"
+            >
               Get Started Free
               <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
             </Button>

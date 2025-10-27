@@ -23,7 +23,11 @@ const Navigation = () => {
             <a href="#technology" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
               Technology
             </a>
-            <Button size="sm" className="bg-primary hover:bg-primary/90 text-primary-foreground">
+            <Button 
+              size="sm" 
+              onClick={() => window.location.href = '/practice'}
+              className="bg-primary hover:bg-primary/90 text-primary-foreground"
+            >
               Get Started
             </Button>
           </div>
