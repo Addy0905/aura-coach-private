@@ -7,7 +7,12 @@ import { Progress } from "@/components/ui/progress";
 const Results = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { duration = 0, metrics = {} } = location.state || {};
+  const { 
+    duration = 0, 
+    metrics = {}, 
+    transcript = "", 
+    speechAnalysis = null 
+  } = location.state || {};
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -29,23 +34,35 @@ const Results = () => {
   const recommendations = [
     {
       title: "Eye Contact",
-      score: metrics.eyeContact,
-      feedback: "Maintain consistent eye contact with the camera. Look directly at the lens when speaking.",
+      score: metrics.eyeContact || 0,
+      feedback: metrics.eyeContact >= 70 
+        ? "Excellent eye contact! Keep maintaining this level of engagement with your audience."
+        : "Practice looking directly at the camera. This helps connect with your audience and shows confidence.",
+      icon: "👁️"
     },
     {
-      title: "Posture",
-      score: metrics.posture,
-      feedback: "Keep your shoulders back and maintain an upright posture throughout your presentation.",
+      title: "Posture & Body Language",
+      score: metrics.posture || 0,
+      feedback: metrics.posture >= 70
+        ? "Great posture! Your body language conveys confidence and professionalism."
+        : "Keep your shoulders back and maintain an upright posture. Good posture helps with breathing and projection.",
+      icon: "🧘"
     },
     {
-      title: "Voice Clarity",
-      score: metrics.clarity,
-      feedback: "Speak at a moderate pace and enunciate clearly. Avoid filler words like 'um' and 'uh'.",
+      title: "Speech Clarity",
+      score: metrics.clarity || 0,
+      feedback: speechAnalysis 
+        ? `Clarity: ${metrics.clarity}%. ${speechAnalysis.feedback}`
+        : "Speak at a moderate pace and enunciate clearly. Practice tongue twisters to improve articulation.",
+      icon: "🗣️"
     },
     {
-      title: "Engagement",
-      score: metrics.engagement,
-      feedback: "Use varied vocal tones and natural gestures to maintain audience engagement.",
+      title: "Engagement & Fluency",
+      score: metrics.engagement || 0,
+      feedback: speechAnalysis && speechAnalysis.wordsPerMinute > 0
+        ? `Speaking at ${speechAnalysis.wordsPerMinute} words per minute. ${speechAnalysis.fillerPercentage > 10 ? 'Try to reduce filler words by taking brief pauses instead.' : 'Good fluency with minimal filler words!'}`
+        : "Use varied vocal tones and natural pauses. This helps maintain audience interest.",
+      icon: "⚡"
     },
   ];
 
@@ -103,7 +120,10 @@ const Results = () => {
               style={{ animationDelay: `${index * 0.1}s` }}
             >
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-bold text-foreground">{item.title}</h3>
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl">{item.icon}</span>
+                  <h3 className="text-lg font-bold text-foreground">{item.title}</h3>
+                </div>
                 <span className={`text-2xl font-bold ${getFeedback(item.score).color}`}>
                   {item.score}%
                 </span>
@@ -117,6 +137,96 @@ const Results = () => {
             </Card>
           ))}
         </div>
+
+        {/* Speech Analysis Details */}
+        {speechAnalysis && speechAnalysis.totalWords > 0 && (
+          <Card className="p-6 bg-gradient-card border-border mb-6">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-xl">📊</span>
+              <h3 className="text-lg font-bold text-foreground">Detailed Speech Analysis</h3>
+            </div>
+            
+            <div className="grid md:grid-cols-4 gap-4 mb-4">
+              <div className="p-4 rounded-lg bg-background/50">
+                <div className="text-2xl font-bold text-primary mb-1">
+                  {speechAnalysis.wordsPerMinute}
+                </div>
+                <div className="text-sm text-muted-foreground">Words Per Minute</div>
+                <div className="text-xs text-muted-foreground mt-1">Ideal: 120-150</div>
+              </div>
+              
+              <div className="p-4 rounded-lg bg-background/50">
+                <div className="text-2xl font-bold text-accent mb-1">
+                  {speechAnalysis.totalWords}
+                </div>
+                <div className="text-sm text-muted-foreground">Total Words</div>
+              </div>
+              
+              <div className="p-4 rounded-lg bg-background/50">
+                <div className="text-2xl font-bold text-primary mb-1">
+                  {speechAnalysis.fillerCount}
+                </div>
+                <div className="text-sm text-muted-foreground">Filler Words</div>
+                <div className="text-xs text-muted-foreground mt-1">{speechAnalysis.fillerPercentage}% of speech</div>
+              </div>
+              
+              <div className="p-4 rounded-lg bg-background/50">
+                <div className="text-2xl font-bold text-accent mb-1">
+                  {speechAnalysis.articulationScore}%
+                </div>
+                <div className="text-sm text-muted-foreground">Articulation Score</div>
+              </div>
+            </div>
+
+            {/* Specific Recommendations for Speech Improvement */}
+            <div className="mt-4 p-4 rounded-lg bg-background/30">
+              <h4 className="text-sm font-semibold text-foreground mb-2">💡 Tips for Improvement:</h4>
+              <ul className="text-sm text-muted-foreground space-y-2">
+                {speechAnalysis.wordsPerMinute < 100 && (
+                  <li className="flex gap-2">
+                    <span className="text-accent">•</span>
+                    <span>Your pace is slower than ideal. Practice reading aloud at a comfortable but slightly faster pace.</span>
+                  </li>
+                )}
+                {speechAnalysis.wordsPerMinute > 180 && (
+                  <li className="flex gap-2">
+                    <span className="text-accent">•</span>
+                    <span>You're speaking quickly. Take conscious breaths between sentences to slow down naturally.</span>
+                  </li>
+                )}
+                {speechAnalysis.fillerPercentage > 10 && (
+                  <li className="flex gap-2">
+                    <span className="text-accent">•</span>
+                    <span>Replace filler words with silent pauses. Pausing shows confidence and gives you time to think.</span>
+                  </li>
+                )}
+                {speechAnalysis.fillerPercentage <= 5 && (
+                  <li className="flex gap-2">
+                    <span className="text-accent">✓</span>
+                    <span className="text-green-400">Excellent! You're using minimal filler words.</span>
+                  </li>
+                )}
+                <li className="flex gap-2">
+                  <span className="text-accent">•</span>
+                  <span>Practice articulation exercises: Read tongue twisters slowly, then gradually increase speed.</span>
+                </li>
+              </ul>
+            </div>
+          </Card>
+        )}
+
+        {/* Transcript Section */}
+        {transcript && transcript.length > 20 && (
+          <Card className="p-6 bg-gradient-card border-border mb-6">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-xl">📝</span>
+              <h3 className="text-lg font-bold text-foreground">Your Speech Transcript</h3>
+            </div>
+            <div className="p-4 rounded-lg bg-background/50 max-h-48 overflow-y-auto">
+              <p className="text-sm text-foreground leading-relaxed">{transcript}</p>
+            </div>
+          </Card>
+        )}
 
         {/* Key Insights */}
         <Card className="p-6 bg-gradient-card border-border mb-6">

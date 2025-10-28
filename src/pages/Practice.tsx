@@ -6,6 +6,7 @@ import { Camera, Mic, MicOff, Video, VideoOff, Square, ArrowLeft, Loader2 } from
 import { useToast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { initializeModels, generateMetrics } from "@/lib/aiAnalysis";
+import { SpeechRecognitionService, SpeechAnalyzer } from "@/lib/speechRecognition";
 
 const Practice = () => {
   const navigate = useNavigate();
@@ -26,23 +27,73 @@ const Practice = () => {
   });
   const [audioLevel, setAudioLevel] = useState(0);
   const [transcript, setTranscript] = useState("");
+  const [interimTranscript, setInterimTranscript] = useState("");
   const [modelsLoaded, setModelsLoaded] = useState(false);
+  const [speechRecognitionSupported, setSpeechRecognitionSupported] = useState(true);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyzerRef = useRef<AnalyserNode | null>(null);
+  const speechRecognitionRef = useRef<SpeechRecognitionService | null>(null);
+  const speechAnalyzerRef = useRef<SpeechAnalyzer>(new SpeechAnalyzer());
 
-  // Initialize AI models on mount
+  // Initialize AI models and speech recognition on mount
   useEffect(() => {
+    // Initialize visual AI models
     initializeModels().then((success) => {
       setModelsLoaded(success);
       if (success) {
-        toast({
-          title: "AI Models Ready",
-          description: "Real-time analysis system initialized",
-        });
+        console.log("Visual AI models initialized");
       }
     });
-  }, []);
+
+    // Initialize speech recognition
+    const speechService = new SpeechRecognitionService();
+    if (!speechService.isSupported()) {
+      setSpeechRecognitionSupported(false);
+      toast({
+        title: "Speech Recognition Unavailable",
+        description: "Your browser doesn't support speech recognition. Try Chrome or Edge.",
+        variant: "destructive",
+      });
+    } else {
+      speechRecognitionRef.current = speechService;
+      
+      speechService.onTranscript((text, isFinal) => {
+        if (isFinal) {
+          setTranscript(prev => prev + ' ' + text);
+          setInterimTranscript('');
+          
+          // Analyze speech patterns
+          const analysis = speechAnalyzerRef.current.analyzeTranscript(text);
+          console.log('Speech analysis:', analysis);
+        } else {
+          setInterimTranscript(text);
+        }
+      });
+
+      speechService.onError((error) => {
+        console.error('Speech recognition error:', error);
+        if (error === 'not-allowed') {
+          toast({
+            title: "Microphone Permission Required",
+            description: "Please allow microphone access for speech analysis",
+            variant: "destructive",
+          });
+        }
+      });
+
+      toast({
+        title: "System Ready",
+        description: "AI analysis and speech recognition initialized",
+      });
+    }
+
+    return () => {
+      if (speechRecognitionRef.current) {
+        speechRecognitionRef.current.stop();
+      }
+    };
+  }, [toast]);
 
   // Real-time AI analysis during recording
   useEffect(() => {
@@ -51,27 +102,36 @@ const Practice = () => {
       interval = setInterval(async () => {
         setRecordingTime(prev => prev + 1);
         
-        // Generate real AI-powered metrics
+        // Get speech analysis metrics
+        const speechMetrics = speechAnalyzerRef.current.analyzeTranscript(transcript);
+        
+        // Generate visual AI-powered metrics
         try {
-          const metrics = await generateMetrics(
+          const visualMetrics = await generateMetrics(
             videoRef.current!,
             audioLevel,
             transcript
           );
           
-          setLiveMetrics(metrics);
+          // Combine visual and speech metrics
+          setLiveMetrics({
+            eyeContact: visualMetrics.eyeContact,
+            posture: visualMetrics.posture,
+            clarity: speechMetrics.clarityScore,
+            engagement: Math.round((visualMetrics.engagement + speechMetrics.fluencyScore) / 2),
+          });
 
-          // Send to backend for deeper analysis every 5 seconds
-          if (recordingTime % 5 === 0 && metrics.imageData) {
+          // Send to backend for deeper analysis every 10 seconds
+          if (recordingTime % 10 === 0 && visualMetrics.imageData && transcript.length > 20) {
             const { data, error } = await supabase.functions.invoke('analyze-presentation', {
               body: {
-                imageData: metrics.imageData,
+                imageData: visualMetrics.imageData,
                 transcript: transcript
               }
             });
 
             if (!error && data) {
-              console.log('Deep analysis:', data);
+              console.log('Deep AI analysis:', data);
             }
           }
         } catch (error) {
@@ -169,14 +229,39 @@ const Practice = () => {
       });
       return;
     }
+
+    if (!speechRecognitionSupported) {
+      toast({
+        title: "Speech Recognition Required",
+        description: "Please use Chrome or Edge browser for speech analysis",
+        variant: "destructive",
+      });
+      return;
+    }
     
     setIsRecording(true);
     setRecordingTime(0);
     setIsAnalyzing(true);
+    setTranscript("");
+    setInterimTranscript("");
+    speechAnalyzerRef.current.reset();
+    
+    // Start speech recognition
+    if (speechRecognitionRef.current) {
+      const started = speechRecognitionRef.current.start();
+      if (!started) {
+        toast({
+          title: "Speech Recognition Failed",
+          description: "Could not start speech recognition",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
     
     toast({
       title: "Recording Started",
-      description: "AI is now analyzing your presentation in real-time",
+      description: "Real-time AI analysis and speech recognition active",
     });
   };
 
@@ -184,17 +269,26 @@ const Practice = () => {
     setIsRecording(false);
     setIsAnalyzing(false);
     
+    // Stop speech recognition
+    if (speechRecognitionRef.current) {
+      speechRecognitionRef.current.stop();
+    }
+
+    const finalAnalysis = speechAnalyzerRef.current.analyzeTranscript(transcript);
+    
     toast({
       title: "Recording Stopped",
-      description: "Analyzing your session...",
+      description: "Analyzing your complete session...",
     });
     
-    // Simulate analysis and navigate to results
+    // Navigate to results with complete data
     setTimeout(() => {
       navigate("/results", { 
         state: { 
           duration: recordingTime,
-          metrics: liveMetrics 
+          metrics: liveMetrics,
+          transcript: transcript,
+          speechAnalysis: finalAnalysis
         } 
       });
     }, 2000);
@@ -245,9 +339,18 @@ const Practice = () => {
                 )}
 
                 {isAnalyzing && (
-                  <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-2 bg-primary/90 rounded-full">
-                    <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                    <span className="text-sm font-medium text-white">AI Analyzing</span>
+                  <div className="absolute top-4 left-4 flex flex-col gap-2">
+                    <div className="flex items-center gap-2 px-3 py-2 bg-primary/90 rounded-full">
+                      <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                      <span className="text-sm font-medium text-white">Live AI Analysis</span>
+                    </div>
+                    {(transcript || interimTranscript) && (
+                      <div className="px-3 py-2 bg-background/90 rounded-lg max-w-md">
+                        <p className="text-xs text-foreground">
+                          {transcript} <span className="text-muted-foreground italic">{interimTranscript}</span>
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
 
