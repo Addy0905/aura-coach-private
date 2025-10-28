@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Camera, Mic, MicOff, Video, VideoOff, Square, ArrowLeft, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+import { initializeModels, generateMetrics } from "@/lib/aiAnalysis";
 
 const Practice = () => {
   const navigate = useNavigate();
@@ -22,23 +24,94 @@ const Practice = () => {
     clarity: 0,
     engagement: 0,
   });
+  const [audioLevel, setAudioLevel] = useState(0);
+  const [transcript, setTranscript] = useState("");
+  const [modelsLoaded, setModelsLoaded] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyzerRef = useRef<AnalyserNode | null>(null);
 
+  // Initialize AI models on mount
+  useEffect(() => {
+    initializeModels().then((success) => {
+      setModelsLoaded(success);
+      if (success) {
+        toast({
+          title: "AI Models Ready",
+          description: "Real-time analysis system initialized",
+        });
+      }
+    });
+  }, []);
+
+  // Real-time AI analysis during recording
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    if (isRecording) {
-      interval = setInterval(() => {
+    if (isRecording && videoRef.current && modelsLoaded) {
+      interval = setInterval(async () => {
         setRecordingTime(prev => prev + 1);
-        // Simulate real-time metrics updates
-        setLiveMetrics({
-          eyeContact: Math.floor(Math.random() * 30) + 70,
-          posture: Math.floor(Math.random() * 25) + 75,
-          clarity: Math.floor(Math.random() * 20) + 80,
-          engagement: Math.floor(Math.random() * 35) + 65,
-        });
+        
+        // Generate real AI-powered metrics
+        try {
+          const metrics = await generateMetrics(
+            videoRef.current!,
+            audioLevel,
+            transcript
+          );
+          
+          setLiveMetrics(metrics);
+
+          // Send to backend for deeper analysis every 5 seconds
+          if (recordingTime % 5 === 0 && metrics.imageData) {
+            const { data, error } = await supabase.functions.invoke('analyze-presentation', {
+              body: {
+                imageData: metrics.imageData,
+                transcript: transcript
+              }
+            });
+
+            if (!error && data) {
+              console.log('Deep analysis:', data);
+            }
+          }
+        } catch (error) {
+          console.error('Error generating metrics:', error);
+        }
       }, 1000);
     }
     return () => clearInterval(interval);
-  }, [isRecording]);
+  }, [isRecording, modelsLoaded, audioLevel, transcript, recordingTime]);
+
+  // Audio level monitoring
+  useEffect(() => {
+    if (stream && isRecording) {
+      const audioContext = new AudioContext();
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyzer = audioContext.createAnalyser();
+      analyzer.fftSize = 256;
+      source.connect(analyzer);
+      
+      audioContextRef.current = audioContext;
+      analyzerRef.current = analyzer;
+
+      const dataArray = new Uint8Array(analyzer.frequencyBinCount);
+      const updateAudioLevel = () => {
+        if (analyzerRef.current && isRecording) {
+          analyzerRef.current.getByteFrequencyData(dataArray);
+          const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+          setAudioLevel(average / 255);
+          requestAnimationFrame(updateAudioLevel);
+        }
+      };
+      updateAudioLevel();
+    }
+
+    return () => {
+      if (audioContextRef.current) {
+        audioContextRef.current.close();
+      }
+    };
+  }, [stream, isRecording]);
 
   const startCamera = async () => {
     try {
