@@ -5,7 +5,8 @@ import { Card } from "@/components/ui/card";
 import { Camera, Mic, MicOff, Video, VideoOff, Square, ArrowLeft, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { initializeModels, generateMetrics } from "@/lib/aiAnalysis";
+import { VisionAnalyzer } from "@/lib/visionAnalysis";
+import { AudioAnalyzer } from "@/lib/audioAnalysis";
 import { SpeechRecognitionService, SpeechAnalyzer } from "@/lib/speechRecognition";
 
 const Practice = () => {
@@ -18,33 +19,57 @@ const Practice = () => {
   const [isMicOn, setIsMicOn] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [recordingTime, setRecordingTime] = useState(0);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [liveMetrics, setLiveMetrics] = useState({
+  const [metrics, setMetrics] = useState({
     eyeContact: 0,
     posture: 0,
     clarity: 0,
     engagement: 0,
+    pitch: 0,
+    volume: 0,
+    gestureVariety: 0,
+    emotion: 'neutral',
   });
+  const [feedback, setFeedback] = useState("");
   const [audioLevel, setAudioLevel] = useState(0);
-  const [transcript, setTranscript] = useState("");
+  const [finalTranscript, setFinalTranscript] = useState("");
   const [interimTranscript, setInterimTranscript] = useState("");
-  const [modelsLoaded, setModelsLoaded] = useState(false);
   const [speechRecognitionSupported, setSpeechRecognitionSupported] = useState(true);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const analyzerRef = useRef<AnalyserNode | null>(null);
+  const [modelsLoaded, setModelsLoaded] = useState(false);
+  const visionAnalyzerRef = useRef<VisionAnalyzer | null>(null);
+  const audioAnalyzerRef = useRef<AudioAnalyzer | null>(null);
   const speechRecognitionRef = useRef<SpeechRecognitionService | null>(null);
   const speechAnalyzerRef = useRef<SpeechAnalyzer>(new SpeechAnalyzer());
+  const animationFrameRef = useRef<number | null>(null);
+  const lastBackendAnalysisRef = useRef<number>(0);
 
-  // Initialize AI models and speech recognition on mount
+  // Initialize advanced AI/ML models on mount
   useEffect(() => {
-    // Initialize visual AI models
-    initializeModels().then((success) => {
-      setModelsLoaded(success);
-      if (success) {
-        console.log("Visual AI models initialized");
+    const init = async () => {
+      try {
+        console.log("Initializing advanced AI/ML models (MediaPipe)...");
+        
+        // Initialize MediaPipe vision analyzer
+        visionAnalyzerRef.current = new VisionAnalyzer();
+        await visionAnalyzerRef.current.initialize();
+        
+        setModelsLoaded(true);
+        console.log("MediaPipe models loaded successfully");
+        
+        toast({
+          title: "AI Models Ready",
+          description: "MediaPipe, audio analysis, and NLP ready for real-time analysis",
+        });
+      } catch (error) {
+        console.error("Failed to initialize AI models:", error);
+        setModelsLoaded(true); // Continue anyway with reduced functionality
+        toast({
+          title: "Model Loading Warning",
+          description: "Some advanced features may be limited",
+          variant: "destructive",
+        });
       }
-    });
+    };
+    init();
 
     // Initialize speech recognition
     const speechService = new SpeechRecognitionService();
@@ -60,12 +85,11 @@ const Practice = () => {
       
       speechService.onTranscript((text, isFinal) => {
         if (isFinal) {
-          setTranscript(prev => prev + ' ' + text);
+          setFinalTranscript(prev => prev + ' ' + text);
           setInterimTranscript('');
           
-          // Analyze speech patterns
-          const analysis = speechAnalyzerRef.current.analyzeTranscript(text);
-          console.log('Speech analysis:', analysis);
+          // Analyze speech patterns in real-time
+          speechAnalyzerRef.current.analyzeTranscript(text);
         } else {
           setInterimTranscript(text);
         }
@@ -81,97 +105,161 @@ const Practice = () => {
           });
         }
       });
-
-      toast({
-        title: "System Ready",
-        description: "AI analysis and speech recognition initialized",
-      });
     }
 
     return () => {
+      if (visionAnalyzerRef.current) {
+        visionAnalyzerRef.current.cleanup();
+      }
+      if (audioAnalyzerRef.current) {
+        audioAnalyzerRef.current.cleanup();
+      }
       if (speechRecognitionRef.current) {
         speechRecognitionRef.current.stop();
       }
     };
   }, [toast]);
 
-  // Real-time AI analysis during recording
+  // Real-time analysis loop with advanced AI/ML
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (isRecording && videoRef.current && modelsLoaded) {
-      interval = setInterval(async () => {
-        setRecordingTime(prev => prev + 1);
+    if (!isRecording || !videoRef.current || !canvasRef.current) return;
+
+    let frameCount = 0;
+
+    const analyzeFrame = async () => {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      
+      if (!video || !canvas || video.readyState !== video.HAVE_ENOUGH_DATA) {
+        animationFrameRef.current = requestAnimationFrame(analyzeFrame);
+        return;
+      }
+
+      frameCount++;
+      const timestamp = performance.now();
+
+      try {
+        // Run MediaPipe vision analysis every frame
+        const visionMetrics = visionAnalyzerRef.current 
+          ? await visionAnalyzerRef.current.analyzeFrame(video, timestamp) 
+          : null;
+        
+        // Get audio features from advanced audio analyzer
+        const audioFeatures = audioAnalyzerRef.current 
+          ? audioAnalyzerRef.current.getAudioFeatures() 
+          : null;
         
         // Get speech analysis metrics
-        const speechMetrics = speechAnalyzerRef.current.analyzeTranscript(transcript);
-        
-        // Generate visual AI-powered metrics
-        try {
-          const visualMetrics = await generateMetrics(
-            videoRef.current!,
-            audioLevel,
-            transcript
-          );
-          
-          // Combine visual and speech metrics
-          setLiveMetrics({
-            eyeContact: visualMetrics.eyeContact,
-            posture: visualMetrics.posture,
-            clarity: speechMetrics.clarityScore,
-            engagement: Math.round((visualMetrics.engagement + speechMetrics.fluencyScore) / 2),
-          });
+        const speechMetrics = speechAnalyzerRef.current.getMetrics();
 
-          // Send to backend for deeper analysis every 10 seconds
-          if (recordingTime % 10 === 0 && visualMetrics.imageData && transcript.length > 20) {
+        // Update real-time metrics with actual AI/ML analysis
+        if (visionMetrics && audioFeatures) {
+          const newMetrics = {
+            eyeContact: visionMetrics.face.eyeContact,
+            posture: visionMetrics.posture.postureScore,
+            clarity: Math.max(25, Math.round((audioFeatures.clarity + speechMetrics.clarityScore) / 2)),
+            engagement: Math.max(25, Math.round(
+              (visionMetrics.face.emotionConfidence * 100 * 0.5) + 
+              (speechMetrics.fluencyScore * 0.5)
+            )),
+            pitch: audioFeatures.pitch,
+            volume: audioFeatures.volume,
+            gestureVariety: visionMetrics.gestures.gestureVariety,
+            emotion: visionMetrics.face.emotion,
+          };
+          
+          setMetrics(newMetrics);
+
+          // Generate real-time feedback based on actual metrics
+          const feedbackParts = [];
+          if (visionMetrics.face.eyeContact < 50) feedbackParts.push("👀 Look at the camera");
+          if (visionMetrics.posture.postureScore < 60) feedbackParts.push("📏 Straighten your posture");
+          if (speechMetrics.wordsPerMinute > 150) feedbackParts.push("⏱️ Slow down your pace");
+          if (speechMetrics.wordsPerMinute < 80 && speechMetrics.wordsPerMinute > 0) feedbackParts.push("⚡ Speak faster");
+          if (audioFeatures.volume < -40) feedbackParts.push("🔊 Speak louder");
+          if (visionMetrics.gestures.handVisibility < 30) feedbackParts.push("👐 Use hand gestures");
+          if (speechMetrics.fillerCount > 5) feedbackParts.push("🎯 Reduce filler words");
+          
+          setFeedback(feedbackParts.length > 0 ? feedbackParts.join(" • ") : "✨ Excellent! Keep going!");
+        }
+
+        // Send to backend for deeper NLP analysis every 15 seconds
+        const now = Date.now();
+        if (now - lastBackendAnalysisRef.current > 15000 && finalTranscript.length > 50) {
+          lastBackendAnalysisRef.current = now;
+          
+          const context = canvas.getContext("2d");
+          if (context) {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            context.drawImage(video, 0, 0);
+            const imageData = canvas.toDataURL("image/jpeg", 0.8);
+
+            console.log('Sending to backend for deep NLP analysis...');
             const { data, error } = await supabase.functions.invoke('analyze-presentation', {
               body: {
-                imageData: visualMetrics.imageData,
-                transcript: transcript
+                imageData,
+                audioData: null,
+                transcript: finalTranscript,
               }
             });
 
-            if (!error && data) {
-              console.log('Deep AI analysis:', data);
+            if (error) {
+              console.error('Backend analysis error:', error);
+            } else if (data) {
+              console.log('Backend deep analysis:', data);
+              // Backend provides deeper semantic content analysis
             }
           }
-        } catch (error) {
-          console.error('Error generating metrics:', error);
         }
+      } catch (error) {
+        console.error("Error analyzing frame:", error);
+      }
+
+      animationFrameRef.current = requestAnimationFrame(analyzeFrame);
+    };
+
+    analyzeFrame();
+
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [isRecording, finalTranscript]);
+
+  // Audio level monitoring using advanced audio analyzer
+  useEffect(() => {
+    if (!isRecording) {
+      setAudioLevel(0);
+      return;
+    }
+
+    const updateAudioLevel = () => {
+      if (audioAnalyzerRef.current) {
+        const features = audioAnalyzerRef.current.getAudioFeatures();
+        // Convert dB to 0-100 scale for visualization
+        const normalizedVolume = Math.max(0, Math.min(100, (features.volume + 60) * 1.67));
+        setAudioLevel(Math.round(normalizedVolume));
+      }
+      if (isRecording) {
+        requestAnimationFrame(updateAudioLevel);
+      }
+    };
+
+    updateAudioLevel();
+  }, [isRecording]);
+
+  // Recording timer
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isRecording) {
+      interval = setInterval(() => {
+        setRecordingTime(prev => prev + 1);
       }, 1000);
     }
     return () => clearInterval(interval);
-  }, [isRecording, modelsLoaded, audioLevel, transcript, recordingTime]);
-
-  // Audio level monitoring
-  useEffect(() => {
-    if (stream && isRecording) {
-      const audioContext = new AudioContext();
-      const source = audioContext.createMediaStreamSource(stream);
-      const analyzer = audioContext.createAnalyser();
-      analyzer.fftSize = 256;
-      source.connect(analyzer);
-      
-      audioContextRef.current = audioContext;
-      analyzerRef.current = analyzer;
-
-      const dataArray = new Uint8Array(analyzer.frequencyBinCount);
-      const updateAudioLevel = () => {
-        if (analyzerRef.current && isRecording) {
-          analyzerRef.current.getByteFrequencyData(dataArray);
-          const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
-          setAudioLevel(average / 255);
-          requestAnimationFrame(updateAudioLevel);
-        }
-      };
-      updateAudioLevel();
-    }
-
-    return () => {
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
-      }
-    };
-  }, [stream, isRecording]);
+  }, [isRecording]);
 
   const startCamera = async () => {
     try {
@@ -230,24 +318,31 @@ const Practice = () => {
       return;
     }
 
-    if (!speechRecognitionSupported) {
+    if (!modelsLoaded) {
       toast({
-        title: "Speech Recognition Required",
-        description: "Please use Chrome or Edge browser for speech analysis",
+        title: "AI Models Loading",
+        description: "Please wait for AI models to initialize",
         variant: "destructive",
       });
       return;
     }
+
+    if (!stream) return;
     
     setIsRecording(true);
     setRecordingTime(0);
-    setIsAnalyzing(true);
-    setTranscript("");
+    setFinalTranscript("");
     setInterimTranscript("");
+    setFeedback("");
     speechAnalyzerRef.current.reset();
+    lastBackendAnalysisRef.current = 0;
+
+    // Initialize advanced audio analyzer with the stream
+    audioAnalyzerRef.current = new AudioAnalyzer();
+    audioAnalyzerRef.current.initialize(stream);
     
     // Start speech recognition
-    if (speechRecognitionRef.current) {
+    if (speechRecognitionRef.current && speechRecognitionSupported) {
       const started = speechRecognitionRef.current.start();
       if (!started) {
         toast({
@@ -255,26 +350,34 @@ const Practice = () => {
           description: "Could not start speech recognition",
           variant: "destructive",
         });
-        return;
       }
     }
     
     toast({
       title: "Recording Started",
-      description: "Real-time AI analysis and speech recognition active",
+      description: "Real-time AI/ML analysis active with MediaPipe, audio analysis, and NLP",
     });
   };
 
   const stopRecording = () => {
     setIsRecording(false);
-    setIsAnalyzing(false);
     
     // Stop speech recognition
     if (speechRecognitionRef.current) {
       speechRecognitionRef.current.stop();
     }
 
-    const finalAnalysis = speechAnalyzerRef.current.analyzeTranscript(transcript);
+    // Cleanup audio analyzer
+    if (audioAnalyzerRef.current) {
+      audioAnalyzerRef.current.cleanup();
+    }
+
+    // Stop animation frame
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
+
+    const finalAnalysis = speechAnalyzerRef.current.getMetrics();
     
     toast({
       title: "Recording Stopped",
@@ -286,9 +389,10 @@ const Practice = () => {
       navigate("/results", { 
         state: { 
           duration: recordingTime,
-          metrics: liveMetrics,
-          transcript: transcript,
-          speechAnalysis: finalAnalysis
+          metrics: metrics,
+          transcript: finalTranscript,
+          speechAnalysis: finalAnalysis,
+          feedback: feedback,
         } 
       });
     }, 2000);
@@ -327,7 +431,7 @@ const Practice = () => {
                   muted
                   className="w-full h-full object-cover"
                 />
-                <canvas ref={canvasRef} className="absolute inset-0" />
+                <canvas ref={canvasRef} className="hidden" />
                 
                 {!isCameraOn && (
                   <div className="absolute inset-0 flex items-center justify-center bg-background/90">
@@ -338,26 +442,34 @@ const Practice = () => {
                   </div>
                 )}
 
-                {isAnalyzing && (
-                  <div className="absolute top-4 left-4 flex flex-col gap-2">
-                    <div className="flex items-center gap-2 px-3 py-2 bg-primary/90 rounded-full">
-                      <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                      <span className="text-sm font-medium text-white">Live AI Analysis</span>
+                {isRecording && (
+                  <>
+                    <div className="absolute top-4 left-4 flex flex-col gap-2">
+                      <div className="flex items-center gap-2 px-3 py-2 bg-primary/90 rounded-full">
+                        <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                        <span className="text-sm font-medium text-white">Live AI Analysis</span>
+                      </div>
+                      {(finalTranscript || interimTranscript) && (
+                        <div className="px-3 py-2 bg-background/90 rounded-lg max-w-md max-h-32 overflow-y-auto">
+                          <p className="text-xs text-foreground">
+                            {finalTranscript} <span className="text-muted-foreground italic">{interimTranscript}</span>
+                          </p>
+                        </div>
+                      )}
                     </div>
-                    {(transcript || interimTranscript) && (
-                      <div className="px-3 py-2 bg-background/90 rounded-lg max-w-md">
-                        <p className="text-xs text-foreground">
-                          {transcript} <span className="text-muted-foreground italic">{interimTranscript}</span>
-                        </p>
+
+                    <div className="absolute top-4 right-4 px-4 py-2 bg-background/90 rounded-full">
+                      <span className="text-lg font-bold text-primary">{formatTime(recordingTime)}</span>
+                    </div>
+
+                    {feedback && (
+                      <div className="absolute bottom-4 left-4 right-4">
+                        <div className="px-4 py-3 bg-primary/90 rounded-lg">
+                          <p className="text-sm font-medium text-white">{feedback}</p>
+                        </div>
                       </div>
                     )}
-                  </div>
-                )}
-
-                {isRecording && (
-                  <div className="absolute top-4 right-4 px-4 py-2 bg-background/90 rounded-full">
-                    <span className="text-lg font-bold text-primary">{formatTime(recordingTime)}</span>
-                  </div>
+                  </>
                 )}
               </div>
 
@@ -408,9 +520,10 @@ const Practice = () => {
                         size="lg"
                         onClick={startRecording}
                         className="bg-primary hover:bg-primary/90"
+                        disabled={!modelsLoaded}
                       >
                         <Video className="w-5 h-5 mr-2" />
-                        Start Recording
+                        {modelsLoaded ? "Start Recording" : "Loading AI..."}
                       </Button>
                     ) : (
                       <Button
@@ -431,13 +544,13 @@ const Practice = () => {
           {/* Real-Time Analytics */}
           <div className="space-y-4">
             <Card className="p-6 bg-gradient-card border-border">
-              <h3 className="text-lg font-bold mb-4 text-foreground">Real-Time Analysis</h3>
+              <h3 className="text-lg font-bold mb-4 text-foreground">Real-Time AI Analysis</h3>
               
-              {!isAnalyzing ? (
+              {!isRecording ? (
                 <div className="text-center py-8">
                   <Loader2 className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />
                   <p className="text-sm text-muted-foreground">
-                    Start recording to see live AI analysis
+                    {modelsLoaded ? "Start recording to see live AI analysis" : "Loading AI models..."}
                   </p>
                 </div>
               ) : (
@@ -446,12 +559,12 @@ const Practice = () => {
                   <div>
                     <div className="flex justify-between mb-2">
                       <span className="text-sm text-muted-foreground">Eye Contact</span>
-                      <span className="text-sm font-bold text-primary">{liveMetrics.eyeContact}%</span>
+                      <span className="text-sm font-bold text-primary">{metrics.eyeContact}%</span>
                     </div>
                     <div className="h-2 bg-secondary rounded-full overflow-hidden">
                       <div
                         className="h-full bg-gradient-primary transition-all duration-500"
-                        style={{ width: `${liveMetrics.eyeContact}%` }}
+                        style={{ width: `${metrics.eyeContact}%` }}
                       />
                     </div>
                   </div>
@@ -460,26 +573,26 @@ const Practice = () => {
                   <div>
                     <div className="flex justify-between mb-2">
                       <span className="text-sm text-muted-foreground">Posture</span>
-                      <span className="text-sm font-bold text-primary">{liveMetrics.posture}%</span>
+                      <span className="text-sm font-bold text-primary">{metrics.posture}%</span>
                     </div>
                     <div className="h-2 bg-secondary rounded-full overflow-hidden">
                       <div
                         className="h-full bg-gradient-secondary transition-all duration-500"
-                        style={{ width: `${liveMetrics.posture}%` }}
+                        style={{ width: `${metrics.posture}%` }}
                       />
                     </div>
                   </div>
 
-                  {/* Voice Clarity */}
+                  {/* Clarity */}
                   <div>
                     <div className="flex justify-between mb-2">
-                      <span className="text-sm text-muted-foreground">Voice Clarity</span>
-                      <span className="text-sm font-bold text-primary">{liveMetrics.clarity}%</span>
+                      <span className="text-sm text-muted-foreground">Clarity</span>
+                      <span className="text-sm font-bold text-primary">{metrics.clarity}%</span>
                     </div>
                     <div className="h-2 bg-secondary rounded-full overflow-hidden">
                       <div
-                        className="h-full bg-gradient-primary transition-all duration-500"
-                        style={{ width: `${liveMetrics.clarity}%` }}
+                        className="h-full bg-gradient-accent transition-all duration-500"
+                        style={{ width: `${metrics.clarity}%` }}
                       />
                     </div>
                   </div>
@@ -488,39 +601,51 @@ const Practice = () => {
                   <div>
                     <div className="flex justify-between mb-2">
                       <span className="text-sm text-muted-foreground">Engagement</span>
-                      <span className="text-sm font-bold text-primary">{liveMetrics.engagement}%</span>
+                      <span className="text-sm font-bold text-primary">{metrics.engagement}%</span>
                     </div>
                     <div className="h-2 bg-secondary rounded-full overflow-hidden">
                       <div
-                        className="h-full bg-gradient-secondary transition-all duration-500"
-                        style={{ width: `${liveMetrics.engagement}%` }}
+                        className="h-full bg-gradient-primary transition-all duration-500"
+                        style={{ width: `${metrics.engagement}%` }}
                       />
+                    </div>
+                  </div>
+
+                  {/* Audio Level */}
+                  <div>
+                    <div className="flex justify-between mb-2">
+                      <span className="text-sm text-muted-foreground">Audio Level</span>
+                      <span className="text-sm font-bold text-primary">{audioLevel}%</span>
+                    </div>
+                    <div className="h-2 bg-secondary rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-green-500 transition-all duration-100"
+                        style={{ width: `${audioLevel}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Additional Metrics */}
+                  <div className="grid grid-cols-2 gap-3 pt-4 border-t border-border">
+                    <div className="text-center">
+                      <p className="text-xs text-muted-foreground mb-1">Emotion</p>
+                      <p className="text-sm font-bold text-foreground capitalize">{metrics.emotion}</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-xs text-muted-foreground mb-1">Gestures</p>
+                      <p className="text-sm font-bold text-foreground">{metrics.gestureVariety}%</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-xs text-muted-foreground mb-1">Pitch</p>
+                      <p className="text-sm font-bold text-foreground">{metrics.pitch} Hz</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-xs text-muted-foreground mb-1">Volume</p>
+                      <p className="text-sm font-bold text-foreground">{metrics.volume} dB</p>
                     </div>
                   </div>
                 </div>
               )}
-            </Card>
-
-            <Card className="p-6 bg-gradient-card border-border">
-              <h3 className="text-lg font-bold mb-3 text-foreground">Quick Tips</h3>
-              <ul className="space-y-2 text-sm text-muted-foreground">
-                <li className="flex gap-2">
-                  <span className="text-accent">•</span>
-                  Maintain eye contact with the camera
-                </li>
-                <li className="flex gap-2">
-                  <span className="text-accent">•</span>
-                  Keep your shoulders relaxed and straight
-                </li>
-                <li className="flex gap-2">
-                  <span className="text-accent">•</span>
-                  Speak clearly at a moderate pace
-                </li>
-                <li className="flex gap-2">
-                  <span className="text-accent">•</span>
-                  Use natural hand gestures
-                </li>
-              </ul>
             </Card>
           </div>
         </div>
