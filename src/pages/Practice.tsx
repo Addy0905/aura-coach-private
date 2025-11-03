@@ -104,7 +104,6 @@ const Practice = () => {
         
         // Get speech analysis metrics
         const speechMetrics = speechAnalyzerRef.current.analyzeTranscript(transcript);
-        console.log('Speech metrics:', speechMetrics);
         
         // Generate visual AI-powered metrics
         try {
@@ -114,9 +113,7 @@ const Practice = () => {
             transcript
           );
           
-          console.log('Visual metrics:', visualMetrics);
-          
-          // Combine visual and speech metrics for real analysis
+          // Combine visual and speech metrics
           setLiveMetrics({
             eyeContact: visualMetrics.eyeContact,
             posture: visualMetrics.posture,
@@ -124,34 +121,17 @@ const Practice = () => {
             engagement: Math.round((visualMetrics.engagement + speechMetrics.fluencyScore) / 2),
           });
 
-          // Send to backend for deeper analysis every 15 seconds
-          if (recordingTime % 15 === 0 && visualMetrics.imageData && transcript.length > 20) {
-            console.log('Sending to backend for deep analysis...');
-            try {
-              const { data, error } = await supabase.functions.invoke('analyze-presentation', {
-                body: {
-                  imageData: visualMetrics.imageData,
-                  transcript: transcript
-                }
-              });
-
-              if (error) {
-                console.error('Backend analysis error:', error);
-              } else if (data) {
-                console.log('Deep AI analysis:', data);
-                
-                // Update metrics with backend insights
-                if (data.vision) {
-                  setLiveMetrics(prev => ({
-                    eyeContact: Math.round((prev.eyeContact + data.vision.eyeContact) / 2),
-                    posture: Math.round((prev.posture + data.vision.posture) / 2),
-                    clarity: prev.clarity,
-                    engagement: Math.round((prev.engagement + data.vision.bodyLanguage) / 2),
-                  }));
-                }
+          // Send to backend for deeper analysis every 10 seconds
+          if (recordingTime % 10 === 0 && visualMetrics.imageData && transcript.length > 20) {
+            const { data, error } = await supabase.functions.invoke('analyze-presentation', {
+              body: {
+                imageData: visualMetrics.imageData,
+                transcript: transcript
               }
-            } catch (err) {
-              console.error('Failed to invoke backend analysis:', err);
+            });
+
+            if (!error && data) {
+              console.log('Deep AI analysis:', data);
             }
           }
         } catch (error) {
