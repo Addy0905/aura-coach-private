@@ -189,6 +189,10 @@ export class SpeechAnalyzer {
     return feedback.join(' ');
   }
 
+  getMetrics() {
+    return this.analyzeTranscript('');
+  }
+
   reset() {
     this.wordTimestamps = [];
     this.lastWordTime = 0;
