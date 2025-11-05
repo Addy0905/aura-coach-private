@@ -8,6 +8,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { VisionAnalyzer } from "@/lib/visionAnalysis";
 import { AudioAnalyzer } from "@/lib/audioAnalysis";
 import { SpeechRecognitionService, SpeechAnalyzer } from "@/lib/speechRecognition";
+import { FusionAlgorithm } from "@/lib/fusionAlgorithm";
+import type { RawMetrics } from "@/lib/fusionAlgorithm";
 
 const Practice = () => {
   const navigate = useNavigate();
@@ -39,6 +41,7 @@ const Practice = () => {
   const audioAnalyzerRef = useRef<AudioAnalyzer | null>(null);
   const speechRecognitionRef = useRef<SpeechRecognitionService | null>(null);
   const speechAnalyzerRef = useRef<SpeechAnalyzer>(new SpeechAnalyzer());
+  const fusionAlgorithmRef = useRef<FusionAlgorithm>(new FusionAlgorithm());
   const animationFrameRef = useRef<number | null>(null);
   const lastBackendAnalysisRef = useRef<number>(0);
 
@@ -152,35 +155,66 @@ const Practice = () => {
         // Get speech analysis metrics
         const speechMetrics = speechAnalyzerRef.current.getMetrics();
 
-        // Update real-time metrics with actual AI/ML analysis
+        // Combine all raw metrics for fusion algorithm
         if (visionMetrics && audioFeatures) {
-          const newMetrics = {
+          const rawMetrics: RawMetrics = {
+            // Vision metrics
             eyeContact: visionMetrics.face.eyeContact,
-            posture: visionMetrics.posture.postureScore,
-            clarity: Math.max(25, Math.round((audioFeatures.clarity + speechMetrics.clarityScore) / 2)),
-            engagement: Math.max(25, Math.round(
-              (visionMetrics.face.emotionConfidence * 100 * 0.5) + 
-              (speechMetrics.fluencyScore * 0.5)
-            )),
+            emotion: visionMetrics.face.emotion,
+            emotionConfidence: visionMetrics.face.emotionConfidence,
+            postureScore: visionMetrics.posture.postureScore,
+            shoulderAlignment: visionMetrics.posture.shoulderAlignment,
+            headPosition: visionMetrics.posture.headPosition,
+            gestureVariety: visionMetrics.gestures.gestureVariety,
+            handVisibility: visionMetrics.gestures.handVisibility,
+            
+            // Audio metrics
+            pitch: audioFeatures.pitch,
+            pitchVariation: audioFeatures.pitchVariation,
+            volume: audioFeatures.volume,
+            volumeVariation: audioFeatures.volumeVariation,
+            clarity: audioFeatures.clarity,
+            energy: audioFeatures.energy,
+            
+            // Speech metrics
+            wordsPerMinute: speechMetrics.wordsPerMinute,
+            fillerCount: speechMetrics.fillerCount,
+            fillerPercentage: speechMetrics.fillerPercentage,
+            clarityScore: speechMetrics.clarityScore,
+            fluencyScore: speechMetrics.fluencyScore,
+            articulationScore: speechMetrics.articulationScore,
+          };
+
+          // Apply multi-modal fusion algorithm with temporal smoothing
+          fusionAlgorithmRef.current.setContext('presentation');
+          const fusedMetrics = fusionAlgorithmRef.current.fuse(rawMetrics);
+          
+          // Update UI metrics with fused, smoothed values
+          const newMetrics = {
+            eyeContact: fusedMetrics.eyeContact,
+            posture: fusedMetrics.posture,
+            clarity: fusedMetrics.speechClarity,
+            engagement: fusedMetrics.contentEngagement,
             pitch: audioFeatures.pitch,
             volume: audioFeatures.volume,
-            gestureVariety: visionMetrics.gestures.gestureVariety,
+            gestureVariety: fusedMetrics.bodyLanguage,
             emotion: visionMetrics.face.emotion,
           };
           
           setMetrics(newMetrics);
 
-          // Generate real-time feedback based on actual metrics
+          // Generate real-time feedback based on fused metrics
           const feedbackParts = [];
-          if (visionMetrics.face.eyeContact < 50) feedbackParts.push("👀 Look at the camera");
-          if (visionMetrics.posture.postureScore < 60) feedbackParts.push("📏 Straighten your posture");
-          if (speechMetrics.wordsPerMinute > 150) feedbackParts.push("⏱️ Slow down your pace");
+          if (fusedMetrics.eyeContact < 50) feedbackParts.push("👀 Improve eye contact");
+          if (fusedMetrics.posture < 60) feedbackParts.push("📏 Straighten your posture");
+          if (speechMetrics.wordsPerMinute > 150) feedbackParts.push("⏱️ Slow down - speak at 120-150 WPM");
           if (speechMetrics.wordsPerMinute < 80 && speechMetrics.wordsPerMinute > 0) feedbackParts.push("⚡ Speak faster");
           if (audioFeatures.volume < -40) feedbackParts.push("🔊 Speak louder");
-          if (visionMetrics.gestures.handVisibility < 30) feedbackParts.push("👐 Use hand gestures");
-          if (speechMetrics.fillerCount > 5) feedbackParts.push("🎯 Reduce filler words");
+          if (fusedMetrics.bodyLanguage < 40) feedbackParts.push("👐 Use more hand gestures");
+          if (speechMetrics.fillerPercentage > 10) feedbackParts.push(`🎯 Reduce filler words (${speechMetrics.fillerPercentage}%)`);
+          if (fusedMetrics.confidence < 50) feedbackParts.push("⚠️ Low signal quality");
           
-          setFeedback(feedbackParts.length > 0 ? feedbackParts.join(" • ") : "✨ Excellent! Keep going!");
+          setFeedback(feedbackParts.length > 0 ? feedbackParts.join(" • ") : "✨ Excellent! Keep it up!");
         }
 
         // Send to backend for deeper NLP analysis every 15 seconds
@@ -335,6 +369,7 @@ const Practice = () => {
     setInterimTranscript("");
     setFeedback("");
     speechAnalyzerRef.current.reset();
+    fusionAlgorithmRef.current.reset();
     lastBackendAnalysisRef.current = 0;
 
     // Initialize advanced audio analyzer with the stream
