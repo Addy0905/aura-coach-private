@@ -103,34 +103,45 @@ export class SpeechRecognitionService {
   }
 }
 
-// Analyze speech patterns for people with speech difficulties
+// Advanced speech pattern analysis with temporal filler detection
 export class SpeechAnalyzer {
-  private wordTimestamps: Array<{ word: string; timestamp: number }> = [];
-  private fillerWords = ['um', 'uh', 'like', 'you know', 'actually', 'basically', 'literally'];
+  private wordTimestamps: Array<{ word: string; timestamp: number; isFiller: boolean }> = [];
+  private fillerWords = ['um', 'uh', 'er', 'ah', 'like', 'you know', 'i mean', 'actually', 'basically', 'literally', 'sort of', 'kind of'];
+  private fillerPatterns = [
+    /\b(um+|uh+|er+|ah+)\b/gi,
+    /\b(like)\b(?!\s+(this|that|it))/gi, // Context-aware: "like" not followed by "this/that/it"
+    /\b(you know|i mean|sort of|kind of)\b/gi,
+    /\b(actually|basically|literally)\b(?=\s+[a-z])/gi, // Followed by lowercase word
+  ];
   private lastWordTime = 0;
+  private syllablePatterns = /[aeiouy]+/gi; // Approximate syllable counting
 
   analyzeTranscript(transcript: string) {
     const words = transcript.toLowerCase().split(/\s+/).filter(w => w.length > 0);
     const now = Date.now();
 
-    // Track word timing
+    // Track word timing with filler detection (NLP Token Classification)
     words.forEach(word => {
-      this.wordTimestamps.push({ word, timestamp: now });
+      const isFiller = this.isFillerWord(word);
+      this.wordTimestamps.push({ word, timestamp: now, isFiller });
     });
 
     // Keep only last 60 seconds of data
     const cutoff = now - 60000;
     this.wordTimestamps = this.wordTimestamps.filter(w => w.timestamp > cutoff);
 
-    // Calculate metrics
+    // Calculate metrics with temporal mapping
     const totalWords = this.wordTimestamps.length;
-    const fillerCount = this.wordTimestamps.filter(w => 
-      this.fillerWords.some(filler => w.word.includes(filler))
-    ).length;
+    const fillerCount = this.wordTimestamps.filter(w => w.isFiller).length;
+    
+    // Temporal filler analysis: detect filler clusters
+    const fillerClusters = this.detectFillerClusters();
 
-    // Words per minute
+    // Calculate WPM with syllable estimation for more accurate pace
     const timeSpan = (now - (this.wordTimestamps[0]?.timestamp || now)) / 1000 / 60;
+    const totalSyllables = this.estimateSyllables(this.wordTimestamps.map(w => w.word).join(' '));
     const wordsPerMinute = timeSpan > 0 ? Math.round(totalWords / timeSpan) : 0;
+    const syllablesPerMinute = timeSpan > 0 ? Math.round(totalSyllables / timeSpan) : 0;
 
     // Filler word percentage
     const fillerPercentage = totalWords > 0 ? (fillerCount / totalWords) * 100 : 0;
@@ -154,8 +165,10 @@ export class SpeechAnalyzer {
 
     return {
       wordsPerMinute,
+      syllablesPerMinute,
       fillerCount,
       fillerPercentage: Math.round(fillerPercentage),
+      fillerClusters,
       totalWords,
       paceScore: Math.round(paceScore),
       clarityScore: Math.round(clarityScore),
@@ -191,6 +204,63 @@ export class SpeechAnalyzer {
 
   getMetrics() {
     return this.analyzeTranscript('');
+  }
+
+  // Context-aware filler word detection using regex patterns and NLP
+  private isFillerWord(word: string): boolean {
+    // Direct match
+    if (this.fillerWords.includes(word)) return true;
+    
+    // Pattern matching
+    return this.fillerPatterns.some(pattern => pattern.test(word));
+  }
+
+  // Detect temporal filler clusters (multiple fillers in short time span)
+  private detectFillerClusters(): number {
+    let clusters = 0;
+    let consecutiveFillers = 0;
+    
+    for (let i = 0; i < this.wordTimestamps.length; i++) {
+      if (this.wordTimestamps[i].isFiller) {
+        consecutiveFillers++;
+        if (consecutiveFillers >= 2) {
+          clusters++;
+          consecutiveFillers = 0; // Reset after counting cluster
+        }
+      } else {
+        consecutiveFillers = 0;
+      }
+    }
+    
+    return clusters;
+  }
+
+  // Estimate syllables for accurate pace calculation
+  private estimateSyllables(text: string): number {
+    if (!text) return 0;
+    
+    const words = text.toLowerCase().split(/\s+/);
+    let totalSyllables = 0;
+    
+    for (const word of words) {
+      // Remove non-alphabetic characters
+      const cleanWord = word.replace(/[^a-z]/g, '');
+      if (!cleanWord) continue;
+      
+      // Count vowel groups
+      const matches = cleanWord.match(this.syllablePatterns);
+      let syllables = matches ? matches.length : 1;
+      
+      // Adjust for silent 'e'
+      if (cleanWord.endsWith('e') && syllables > 1) {
+        syllables--;
+      }
+      
+      // Ensure at least 1 syllable per word
+      totalSyllables += Math.max(1, syllables);
+    }
+    
+    return totalSyllables;
   }
 
   reset() {

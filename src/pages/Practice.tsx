@@ -8,6 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { VisionAnalyzer } from "@/lib/visionAnalysis";
 import { AudioAnalyzer } from "@/lib/audioAnalysis";
 import { SpeechRecognitionService, SpeechAnalyzer } from "@/lib/speechRecognition";
+import { ContentAnalyzer } from "@/lib/contentAnalysis";
 import { FusionAlgorithm } from "@/lib/fusionAlgorithm";
 import type { RawMetrics } from "@/lib/fusionAlgorithm";
 
@@ -41,6 +42,7 @@ const Practice = () => {
   const audioAnalyzerRef = useRef<AudioAnalyzer | null>(null);
   const speechRecognitionRef = useRef<SpeechRecognitionService | null>(null);
   const speechAnalyzerRef = useRef<SpeechAnalyzer>(new SpeechAnalyzer());
+  const contentAnalyzerRef = useRef<ContentAnalyzer>(new ContentAnalyzer());
   const fusionAlgorithmRef = useRef<FusionAlgorithm>(new FusionAlgorithm());
   const animationFrameRef = useRef<number | null>(null);
   const lastBackendAnalysisRef = useRef<number>(0);
@@ -60,7 +62,7 @@ const Practice = () => {
         
         toast({
           title: "AI Models Ready",
-          description: "MediaPipe, audio analysis, and NLP ready for real-time analysis",
+          description: "MediaPipe Face Mesh (468 landmarks), Pose (33 keypoints), YIN pitch detection, SNR clarity, TF-IDF, and sentiment analysis ready",
         });
       } catch (error) {
         console.error("Failed to initialize AI models:", error);
@@ -154,11 +156,16 @@ const Practice = () => {
         
         // Get speech analysis metrics
         const speechMetrics = speechAnalyzerRef.current.getMetrics();
+        
+        // Get content analysis metrics (USE, TF-IDF, sentiment, NER)
+        const contentMetrics = finalTranscript.length > 20 
+          ? contentAnalyzerRef.current.analyzeContent(finalTranscript)
+          : null;
 
         // Combine all raw metrics for fusion algorithm
         if (visionMetrics && audioFeatures) {
           const rawMetrics: RawMetrics = {
-            // Vision metrics
+            // Vision metrics (MediaPipe Face Mesh, Iris, Pose)
             eyeContact: visionMetrics.face.eyeContact,
             emotion: visionMetrics.face.emotion,
             emotionConfidence: visionMetrics.face.emotionConfidence,
@@ -168,7 +175,7 @@ const Practice = () => {
             gestureVariety: visionMetrics.gestures.gestureVariety,
             handVisibility: visionMetrics.gestures.handVisibility,
             
-            // Audio metrics
+            // Audio metrics (RMS volume, YIN pitch, SNR clarity)
             pitch: audioFeatures.pitch,
             pitchVariation: audioFeatures.pitchVariation,
             volume: audioFeatures.volume,
@@ -176,7 +183,7 @@ const Practice = () => {
             clarity: audioFeatures.clarity,
             energy: audioFeatures.energy,
             
-            // Speech metrics
+            // Speech metrics (WPM with syllables, regex filler detection, temporal analysis)
             wordsPerMinute: speechMetrics.wordsPerMinute,
             fillerCount: speechMetrics.fillerCount,
             fillerPercentage: speechMetrics.fillerPercentage,
@@ -189,12 +196,13 @@ const Practice = () => {
           fusionAlgorithmRef.current.setContext('presentation');
           const fusedMetrics = fusionAlgorithmRef.current.fuse(rawMetrics);
           
-          // Update UI metrics with fused, smoothed values
+          // Update UI metrics with fused, smoothed values (boosted by content analysis)
+          const contentBoost = contentMetrics ? (contentMetrics.coherenceScore / 100) * 10 : 0;
           const newMetrics = {
             eyeContact: fusedMetrics.eyeContact,
             posture: fusedMetrics.posture,
             clarity: fusedMetrics.speechClarity,
-            engagement: fusedMetrics.contentEngagement,
+            engagement: Math.min(100, fusedMetrics.contentEngagement + contentBoost),
             pitch: audioFeatures.pitch,
             volume: audioFeatures.volume,
             gestureVariety: fusedMetrics.bodyLanguage,
@@ -203,7 +211,7 @@ const Practice = () => {
           
           setMetrics(newMetrics);
 
-          // Generate real-time feedback based on fused metrics
+          // Generate real-time feedback based on fused metrics and content analysis
           const feedbackParts = [];
           if (fusedMetrics.eyeContact < 50) feedbackParts.push("👀 Improve eye contact");
           if (fusedMetrics.posture < 60) feedbackParts.push("📏 Straighten your posture");
@@ -212,6 +220,8 @@ const Practice = () => {
           if (audioFeatures.volume < -40) feedbackParts.push("🔊 Speak louder");
           if (fusedMetrics.bodyLanguage < 40) feedbackParts.push("👐 Use more hand gestures");
           if (speechMetrics.fillerPercentage > 10) feedbackParts.push(`🎯 Reduce filler words (${speechMetrics.fillerPercentage}%)`);
+          if (contentMetrics && contentMetrics.coherenceScore < 60) feedbackParts.push("🔗 Improve flow and coherence");
+          if (contentMetrics && contentMetrics.sentimentLabel === 'negative') feedbackParts.push("😊 Use more positive language");
           if (fusedMetrics.confidence < 50) feedbackParts.push("⚠️ Low signal quality");
           
           setFeedback(feedbackParts.length > 0 ? feedbackParts.join(" • ") : "✨ Excellent! Keep it up!");
@@ -369,6 +379,7 @@ const Practice = () => {
     setInterimTranscript("");
     setFeedback("");
     speechAnalyzerRef.current.reset();
+    contentAnalyzerRef.current.reset();
     fusionAlgorithmRef.current.reset();
     lastBackendAnalysisRef.current = 0;
 
@@ -390,7 +401,7 @@ const Practice = () => {
     
     toast({
       title: "Recording Started",
-      description: "Real-time AI/ML analysis active with MediaPipe, audio analysis, and NLP",
+      description: "Real-time analysis: MediaPipe (face/pose), YIN pitch, SNR clarity, TF-IDF keywords, sentiment, and NER active",
     });
   };
 

@@ -1,15 +1,16 @@
 // Advanced audio analysis using Web Audio API (browser-based Librosa equivalent)
 
 export interface AudioFeatures {
-  pitch: number; // Average pitch in Hz
+  pitch: number; // Average pitch in Hz (YIN Algorithm)
   pitchVariation: number; // Variation in pitch (0-100)
-  volume: number; // Average volume in dB
+  volume: number; // RMS amplitude in dB
   volumeVariation: number; // Variation in volume
   pace: number; // Words per minute
-  clarity: number; // Pronunciation clarity score (0-100)
+  clarity: number; // SNR-based clarity score (0-100)
   energy: number; // Audio energy level
   spectralCentroid: number; // Brightness of sound
   zeroCrossingRate: number; // Rate of sign changes
+  snr: number; // Signal-to-Noise Ratio in dB
 }
 
 export class AudioAnalyzer {
@@ -20,6 +21,8 @@ export class AudioAnalyzer {
   private pitchHistory: number[] = [];
   private volumeHistory: number[] = [];
   private energyHistory: number[] = [];
+  private noiseFloor: number = 0;
+  private noiseCalibrated = false;
 
   initialize(stream: MediaStream) {
     this.audioContext = new AudioContext();
@@ -43,16 +46,26 @@ export class AudioAnalyzer {
     // Get frequency domain data
     this.analyser.getByteFrequencyData(this.frequencyData as any);
 
-    // Calculate pitch using autocorrelation
-    const pitch = this.detectPitch(this.dataArray);
+    // Calculate pitch using YIN-like autocorrelation algorithm
+    const pitch = this.detectPitchYIN(this.dataArray);
     this.pitchHistory.push(pitch);
     if (this.pitchHistory.length > 50) this.pitchHistory.shift();
 
-    // Calculate volume (RMS)
+    // Calculate volume using RMS (Root Mean Square) amplitude
     const volume = this.calculateRMS(this.dataArray);
     const volumeDB = 20 * Math.log10(volume / 255);
     this.volumeHistory.push(volumeDB);
     if (this.volumeHistory.length > 50) this.volumeHistory.shift();
+
+    // Calibrate noise floor (first 10 samples)
+    if (!this.noiseCalibrated && this.volumeHistory.length >= 10) {
+      const sortedVolumes = [...this.volumeHistory].sort((a, b) => a - b);
+      this.noiseFloor = sortedVolumes[2]; // 3rd quietest sample
+      this.noiseCalibrated = true;
+    }
+
+    // Calculate SNR (Signal-to-Noise Ratio)
+    const snr = this.calculateSNR(volumeDB);
 
     // Calculate energy
     const energy = this.calculateEnergy(this.frequencyData);
@@ -62,67 +75,79 @@ export class AudioAnalyzer {
     // Calculate spectral centroid (brightness)
     const spectralCentroid = this.calculateSpectralCentroid(this.frequencyData);
 
-    // Calculate zero crossing rate (clarity indicator)
+    // Calculate zero crossing rate
     const zcr = this.calculateZeroCrossingRate(this.dataArray);
 
     // Calculate variations
     const pitchVariation = this.calculateVariation(this.pitchHistory);
     const volumeVariation = this.calculateVariation(this.volumeHistory);
 
-    // Estimate clarity from ZCR and spectral features
-    const clarity = Math.min(100, (1 - zcr / 0.5) * 50 + (spectralCentroid / 255) * 50);
+    // Calculate clarity from SNR, ZCR, and spectral features
+    const clarityFromSNR = Math.min(100, (snr + 20) * 2); // SNR typically -20 to 30 dB
+    const clarityFromZCR = (1 - Math.min(zcr / 0.5, 1)) * 100;
+    const clarityFromSpectral = (spectralCentroid / 255) * 100;
+    const clarity = (clarityFromSNR * 0.5 + clarityFromZCR * 0.3 + clarityFromSpectral * 0.2);
 
     return {
       pitch: Math.round(pitch),
       pitchVariation: Math.round(pitchVariation * 100),
       volume: Math.round(volumeDB),
       volumeVariation: Math.round(volumeVariation * 100),
-      pace: 0, // Will be calculated from transcript
+      pace: 0, // Will be calculated from transcript with syllable estimation
       clarity: Math.max(25, Math.round(clarity)),
       energy: Math.round(energy),
       spectralCentroid: Math.round(spectralCentroid),
       zeroCrossingRate: Math.round(zcr * 1000) / 1000,
+      snr: Math.round(snr * 10) / 10,
     };
   }
 
-  private detectPitch(buffer: Uint8Array): number {
-    // Autocorrelation method for pitch detection
+  // YIN Algorithm for pitch detection (more accurate than basic autocorrelation)
+  private detectPitchYIN(buffer: Uint8Array): number {
     const SIZE = buffer.length;
     const MAX_SAMPLES = Math.floor(SIZE / 2);
-    let best_offset = -1;
-    let best_correlation = 0;
-    let rms = 0;
+    const threshold = 0.1;
     
-    for (let i = 0; i < SIZE; i++) {
-      const val = (buffer[i] - 128) / 128;
-      rms += val * val;
-    }
-    rms = Math.sqrt(rms / SIZE);
-    
-    if (rms < 0.01) return 0; // Not enough signal
-    
-    let lastCorrelation = 1;
-    for (let offset = 1; offset < MAX_SAMPLES; offset++) {
-      let correlation = 0;
+    // Step 1: Calculate difference function
+    const difference = new Float32Array(MAX_SAMPLES);
+    for (let tau = 0; tau < MAX_SAMPLES; tau++) {
+      let sum = 0;
       for (let i = 0; i < MAX_SAMPLES; i++) {
-        correlation += Math.abs(((buffer[i] - 128) / 128) - ((buffer[i + offset] - 128) / 128));
+        const delta = ((buffer[i] - 128) / 128) - ((buffer[i + tau] - 128) / 128);
+        sum += delta * delta;
       }
-      correlation = 1 - (correlation / MAX_SAMPLES);
-      
-      if (correlation > 0.9 && correlation > lastCorrelation) {
-        const foundGoodCorrelation = correlation > best_correlation;
-        if (foundGoodCorrelation) {
-          best_correlation = correlation;
-          best_offset = offset;
-        }
-      }
-      lastCorrelation = correlation;
+      difference[tau] = sum;
     }
     
-    if (best_offset === -1) return 0;
+    // Step 2: Cumulative mean normalized difference
+    const cmndf = new Float32Array(MAX_SAMPLES);
+    cmndf[0] = 1;
+    let runningSum = 0;
+    for (let tau = 1; tau < MAX_SAMPLES; tau++) {
+      runningSum += difference[tau];
+      cmndf[tau] = difference[tau] / (runningSum / tau);
+    }
     
-    const sampleRate = this.audioContext?.sampleRate || 44100;
-    return sampleRate / best_offset;
+    // Step 3: Absolute threshold
+    let tau = 2; // Start from 2 to avoid zero
+    while (tau < MAX_SAMPLES) {
+      if (cmndf[tau] < threshold) {
+        while (tau + 1 < MAX_SAMPLES && cmndf[tau + 1] < cmndf[tau]) {
+          tau++;
+        }
+        const sampleRate = this.audioContext?.sampleRate || 44100;
+        return sampleRate / tau;
+      }
+      tau++;
+    }
+    
+    return 0; // No pitch detected
+  }
+
+  // Calculate Signal-to-Noise Ratio
+  private calculateSNR(signalDB: number): number {
+    if (!this.noiseCalibrated) return 0;
+    return signalDB - this.noiseFloor;
   }
 
   private calculateRMS(buffer: Uint8Array): number {
@@ -186,6 +211,7 @@ export class AudioAnalyzer {
       energy: 0,
       spectralCentroid: 0,
       zeroCrossingRate: 0,
+      snr: 0,
     };
   }
 
@@ -200,5 +226,7 @@ export class AudioAnalyzer {
     this.pitchHistory = [];
     this.volumeHistory = [];
     this.energyHistory = [];
+    this.noiseFloor = 0;
+    this.noiseCalibrated = false;
   }
 }
