@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Download } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 
 const CTA = () => {
   return (
@@ -25,10 +25,6 @@ const CTA = () => {
             >
               Get Started Free
               <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
-            </Button>
-            <Button size="lg" variant="outline" className="border-border hover:bg-secondary text-lg px-8 py-6">
-              <Download className="mr-2 w-5 h-5" />
-              Download APK
             </Button>
           </div>
 

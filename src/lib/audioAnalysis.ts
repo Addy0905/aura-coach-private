@@ -83,10 +83,14 @@ export class AudioAnalyzer {
     const volumeVariation = this.calculateVariation(this.volumeHistory);
 
     // Calculate clarity from SNR, ZCR, and spectral features
-    const clarityFromSNR = Math.min(100, (snr + 20) * 2); // SNR typically -20 to 30 dB
-    const clarityFromZCR = (1 - Math.min(zcr / 0.5, 1)) * 100;
-    const clarityFromSpectral = (spectralCentroid / 255) * 100;
-    const clarity = (clarityFromSNR * 0.5 + clarityFromZCR * 0.3 + clarityFromSpectral * 0.2);
+    // Only calculate clarity if we have calibrated noise and signal is strong
+    let clarity = 0;
+    if (this.noiseCalibrated && volumeDB > -50) {
+      const clarityFromSNR = Math.max(0, Math.min(100, ((snr + 10) / 30) * 100)); // SNR -10 to 20 dB maps to 0-100
+      const clarityFromZCR = Math.max(0, (1 - Math.min(zcr / 0.3, 1)) * 100);
+      const clarityFromSpectral = Math.max(0, Math.min(100, (spectralCentroid / 200) * 100));
+      clarity = (clarityFromSNR * 0.6 + clarityFromZCR * 0.2 + clarityFromSpectral * 0.2);
+    }
 
     return {
       pitch: Math.round(pitch),
@@ -94,7 +98,7 @@ export class AudioAnalyzer {
       volume: Math.round(volumeDB),
       volumeVariation: Math.round(volumeVariation * 100),
       pace: 0, // Will be calculated from transcript with syllable estimation
-      clarity: Math.max(25, Math.round(clarity)),
+      clarity: Math.round(clarity),
       energy: Math.round(energy),
       spectralCentroid: Math.round(spectralCentroid),
       zeroCrossingRate: Math.round(zcr * 1000) / 1000,
@@ -207,7 +211,7 @@ export class AudioAnalyzer {
       volume: -60,
       volumeVariation: 0,
       pace: 0,
-      clarity: 25,
+      clarity: 0,
       energy: 0,
       spectralCentroid: 0,
       zeroCrossingRate: 0,

@@ -24,10 +24,11 @@ export interface GestureAnalysis {
 }
 
 export interface BodyLanguageMetrics {
-  face: FaceAnalysis;
-  posture: PostureAnalysis;
+  face: FaceAnalysis & { landmarks?: any[] };
+  posture: PostureAnalysis & { landmarks?: any[] };
   gestures: GestureAnalysis;
   overallConfidence: number;
+  timestamp: number;
 }
 
 export class VisionAnalyzer {
@@ -121,10 +122,17 @@ export class VisionAnalyzer {
       );
 
       return {
-        face: faceAnalysis,
-        posture: postureAnalysis,
+        face: { 
+          ...faceAnalysis, 
+          landmarks: faceResults?.faceLandmarks?.[0]?.map((l: any) => ({ x: l.x, y: l.y, z: l.z })) || []
+        },
+        posture: { 
+          ...postureAnalysis, 
+          landmarks: poseResults?.landmarks?.[0]?.map((l: any) => ({ x: l.x, y: l.y, z: l.z })) || []
+        },
         gestures: gestureAnalysis,
         overallConfidence: Math.max(0, overallConfidence),
+        timestamp,
       };
     } catch (error) {
       console.error('Error analyzing frame:', error);
@@ -553,12 +561,14 @@ export class VisionAnalyzer {
         emotionConfidence: 0,
         facialMovement: 0,
         gazeDirection: { x: 0, y: 0 },
+        landmarks: [],
       },
       posture: {
         postureScore: 0,
         shoulderAlignment: 0,
         headPosition: 0,
         stability: 0,
+        landmarks: [],
       },
       gestures: {
         gestureCount: 0,
@@ -567,6 +577,7 @@ export class VisionAnalyzer {
         movementPatterns: [],
       },
       overallConfidence: 0,
+      timestamp: 0,
     };
   }
 

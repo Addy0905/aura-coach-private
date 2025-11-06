@@ -81,7 +81,14 @@ const Results = () => {
           </Button>
           
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" className="border-border">
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="border-border"
+              onClick={() => {
+                window.print();
+              }}
+            >
               <Download className="w-4 h-4 mr-2" />
               Export PDF
             </Button>

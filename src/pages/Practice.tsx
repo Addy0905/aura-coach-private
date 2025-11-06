@@ -17,6 +17,7 @@ const Practice = () => {
   const { toast } = useToast();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [isMicOn, setIsMicOn] = useState(false);
@@ -148,6 +149,68 @@ const Practice = () => {
         const visionMetrics = visionAnalyzerRef.current 
           ? await visionAnalyzerRef.current.analyzeFrame(video, timestamp) 
           : null;
+        
+        // Draw MediaPipe landmarks on overlay canvas
+        const overlayCanvas = overlayCanvasRef.current;
+        if (overlayCanvas && visionMetrics) {
+          overlayCanvas.width = video.videoWidth;
+          overlayCanvas.height = video.videoHeight;
+          const ctx = overlayCanvas.getContext('2d');
+          if (ctx) {
+            ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+            
+            // Draw face mesh landmarks (468 points in green)
+            if (visionMetrics.face.landmarks && visionMetrics.face.landmarks.length > 0) {
+              ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+              visionMetrics.face.landmarks.forEach((landmark: any) => {
+                const x = landmark.x * overlayCanvas.width;
+                const y = landmark.y * overlayCanvas.height;
+                ctx.beginPath();
+                ctx.arc(x, y, 1, 0, 2 * Math.PI);
+                ctx.fill();
+              });
+            }
+            
+            // Draw pose landmarks (33 keypoints in red with skeleton in yellow)
+            if (visionMetrics.posture.landmarks && visionMetrics.posture.landmarks.length > 0) {
+              ctx.fillStyle = 'rgba(255, 0, 0, 0.7)';
+              ctx.strokeStyle = 'rgba(255, 255, 0, 0.5)';
+              ctx.lineWidth = 2;
+              
+              // Draw keypoints
+              visionMetrics.posture.landmarks.forEach((landmark: any) => {
+                const x = landmark.x * overlayCanvas.width;
+                const y = landmark.y * overlayCanvas.height;
+                ctx.beginPath();
+                ctx.arc(x, y, 4, 0, 2 * Math.PI);
+                ctx.fill();
+              });
+              
+              // Draw skeleton connections
+              const connections = [
+                [11, 12], [11, 13], [13, 15], [12, 14], [14, 16], // Arms
+                [11, 23], [12, 24], [23, 24], // Torso
+                [23, 25], [25, 27], [24, 26], [26, 28], // Legs
+                [0, 1], [1, 2], [2, 3], [3, 7], [0, 4], [4, 5], [5, 6], [6, 8] // Face
+              ];
+              
+              connections.forEach(([start, end]) => {
+                const landmarks = visionMetrics.posture.landmarks;
+                if (landmarks[start] && landmarks[end]) {
+                  const startX = landmarks[start].x * overlayCanvas.width;
+                  const startY = landmarks[start].y * overlayCanvas.height;
+                  const endX = landmarks[end].x * overlayCanvas.width;
+                  const endY = landmarks[end].y * overlayCanvas.height;
+                  
+                  ctx.beginPath();
+                  ctx.moveTo(startX, startY);
+                  ctx.lineTo(endX, endY);
+                  ctx.stroke();
+                }
+              });
+            }
+          }
+        }
         
         // Get audio features from advanced audio analyzer
         const audioFeatures = audioAnalyzerRef.current 
@@ -478,6 +541,11 @@ const Practice = () => {
                   className="w-full h-full object-cover"
                 />
                 <canvas ref={canvasRef} className="hidden" />
+                <canvas 
+                  ref={overlayCanvasRef} 
+                  className="absolute inset-0 w-full h-full pointer-events-none"
+                  style={{ objectFit: 'cover' }}
+                />
                 
                 {!isCameraOn && (
                   <div className="absolute inset-0 flex items-center justify-center bg-background/90">
