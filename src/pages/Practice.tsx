@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -24,13 +24,13 @@ const Practice = () => {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [recordingTime, setRecordingTime] = useState(0);
   const [metrics, setMetrics] = useState({
-    eyeContact: 0,
-    posture: 0,
-    clarity: 0,
-    engagement: 0,
-    pitch: 0,
-    volume: 0,
-    gestureVariety: 0,
+    eyeContact: null,
+    posture: null,
+    clarity: null,
+    engagement: null,
+    pitch: null,
+    volume: null,
+    gestureVariety: null,
     emotion: 'neutral',
   });
   const [feedback, setFeedback] = useState("");
@@ -47,6 +47,11 @@ const Practice = () => {
   const fusionAlgorithmRef = useRef<FusionAlgorithm>(new FusionAlgorithm());
   const animationFrameRef = useRef<number | null>(null);
   const lastBackendAnalysisRef = useRef<number>(0);
+
+  // Memoize analyzers to prevent unnecessary recreations
+  const memoizedSpeechAnalyzer = useMemo(() => speechAnalyzerRef.current, []);
+  const memoizedContentAnalyzer = useMemo(() => contentAnalyzerRef.current, []);
+  const memoizedFusionAlgorithm = useMemo(() => fusionAlgorithmRef.current, []);
 
   // Initialize advanced AI/ML models on mount
   useEffect(() => {
@@ -95,12 +100,11 @@ const Practice = () => {
           setInterimTranscript('');
           
           // Analyze speech patterns in real-time
-          speechAnalyzerRef.current.analyzeTranscript(text);
+          memoizedSpeechAnalyzer.analyzeTranscript(text);
         } else {
           setInterimTranscript(text);
         }
       });
-
       speechService.onError((error) => {
         console.error('Speech recognition error:', error);
         if (error === 'not-allowed') {
@@ -123,15 +127,16 @@ const Practice = () => {
       if (speechRecognitionRef.current) {
         speechRecognitionRef.current.stop();
       }
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
     };
-  }, [toast]);
+  }, [toast, memoizedSpeechAnalyzer]);
 
   // Real-time analysis loop with advanced AI/ML
   useEffect(() => {
     if (!isRecording || !videoRef.current || !canvasRef.current) return;
-
     let frameCount = 0;
-
     const analyzeFrame = async () => {
       const video = videoRef.current;
       const canvas = canvasRef.current;
@@ -140,14 +145,12 @@ const Practice = () => {
         animationFrameRef.current = requestAnimationFrame(analyzeFrame);
         return;
       }
-
       frameCount++;
       const timestamp = performance.now();
-
       try {
         // Run MediaPipe vision analysis every frame
-        const visionMetrics = visionAnalyzerRef.current 
-          ? await visionAnalyzerRef.current.analyzeFrame(video, timestamp) 
+        const visionMetrics = visionAnalyzerRef.current
+          ? await visionAnalyzerRef.current.analyzeFrame(video, timestamp)
           : null;
         
         // Draw MediaPipe landmarks on overlay canvas
@@ -213,20 +216,23 @@ const Practice = () => {
         }
         
         // Get audio features from advanced audio analyzer
-        const audioFeatures = audioAnalyzerRef.current 
-          ? audioAnalyzerRef.current.getAudioFeatures() 
+        const audioFeatures = audioAnalyzerRef.current
+          ? audioAnalyzerRef.current.getAudioFeatures()
           : null;
         
+        // Check for no voice detection (e.g., if volume is below a threshold like -60 dB or clarity is low)
+        const isVoiceDetected = audioFeatures && audioFeatures.volume > -60 && audioFeatures.clarity > 0;
+        
         // Get speech analysis metrics
-        const speechMetrics = speechAnalyzerRef.current.getMetrics();
+        const speechMetrics = memoizedSpeechAnalyzer.getMetrics();
         
         // Get content analysis metrics (USE, TF-IDF, sentiment, NER)
-        const contentMetrics = finalTranscript.length > 20 
-          ? contentAnalyzerRef.current.analyzeContent(finalTranscript)
+        const contentMetrics = finalTranscript.length > 20
+          ? memoizedContentAnalyzer.analyzeContent(finalTranscript)
           : null;
 
         // Combine all raw metrics for fusion algorithm
-        if (visionMetrics && audioFeatures) {
+        if (visionMetrics && audioFeatures && isVoiceDetected) {
           const rawMetrics: RawMetrics = {
             // Vision metrics (MediaPipe Face Mesh, Iris, Pose)
             eyeContact: visionMetrics.face.eyeContact,
@@ -256,8 +262,8 @@ const Practice = () => {
           };
 
           // Apply multi-modal fusion algorithm with temporal smoothing
-          fusionAlgorithmRef.current.setContext('presentation');
-          const fusedMetrics = fusionAlgorithmRef.current.fuse(rawMetrics);
+          memoizedFusionAlgorithm.setContext('presentation');
+          const fusedMetrics = memoizedFusionAlgorithm.fuse(rawMetrics);
           
           // Update UI metrics with fused, smoothed values (boosted by content analysis)
           const contentBoost = contentMetrics ? (contentMetrics.coherenceScore / 100) * 10 : 0;
@@ -288,11 +294,24 @@ const Practice = () => {
           if (fusedMetrics.confidence < 50) feedbackParts.push("⚠️ Low signal quality");
           
           setFeedback(feedbackParts.length > 0 ? feedbackParts.join(" • ") : "✨ Excellent! Keep it up!");
+        } else {
+          // No voice detected: Reset scores to null (or 0 if preferred, but null for "no score")
+          setMetrics({
+            eyeContact: null,
+            posture: null,
+            clarity: null,
+            engagement: null,
+            pitch: null,
+            volume: null,
+            gestureVariety: null,
+            emotion: 'neutral',
+          });
+          setFeedback("🔇 No voice detected - Start speaking for analysis");
         }
 
         // Send to backend for deeper NLP analysis every 15 seconds
         const now = Date.now();
-        if (now - lastBackendAnalysisRef.current > 15000 && finalTranscript.length > 50) {
+        if (now - lastBackendAnalysisRef.current > 15000 && finalTranscript.length > 50 && isVoiceDetected) {
           lastBackendAnalysisRef.current = now;
           
           const context = canvas.getContext("2d");
@@ -301,7 +320,6 @@ const Practice = () => {
             canvas.height = video.videoHeight;
             context.drawImage(video, 0, 0);
             const imageData = canvas.toDataURL("image/jpeg", 0.8);
-
             console.log('Sending to backend for deep NLP analysis...');
             const { data, error } = await supabase.functions.invoke('analyze-presentation', {
               body: {
@@ -310,7 +328,6 @@ const Practice = () => {
                 transcript: finalTranscript,
               }
             });
-
             if (error) {
               console.error('Backend analysis error:', error);
             } else if (data) {
@@ -322,18 +339,15 @@ const Practice = () => {
       } catch (error) {
         console.error("Error analyzing frame:", error);
       }
-
       animationFrameRef.current = requestAnimationFrame(analyzeFrame);
     };
-
     analyzeFrame();
-
     return () => {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [isRecording, finalTranscript]);
+  }, [isRecording, finalTranscript, memoizedSpeechAnalyzer, memoizedContentAnalyzer, memoizedFusionAlgorithm]);
 
   // Audio level monitoring using advanced audio analyzer
   useEffect(() => {
@@ -341,7 +355,7 @@ const Practice = () => {
       setAudioLevel(0);
       return;
     }
-
+    let rafId: number;
     const updateAudioLevel = () => {
       if (audioAnalyzerRef.current) {
         const features = audioAnalyzerRef.current.getAudioFeatures();
@@ -350,11 +364,13 @@ const Practice = () => {
         setAudioLevel(Math.round(normalizedVolume));
       }
       if (isRecording) {
-        requestAnimationFrame(updateAudioLevel);
+        rafId = requestAnimationFrame(updateAudioLevel);
       }
     };
-
     updateAudioLevel();
+    return () => {
+      cancelAnimationFrame(rafId);
+    };
   }, [isRecording]);
 
   // Recording timer
@@ -424,7 +440,6 @@ const Practice = () => {
       });
       return;
     }
-
     if (!modelsLoaded) {
       toast({
         title: "AI Models Loading",
@@ -433,7 +448,6 @@ const Practice = () => {
       });
       return;
     }
-
     if (!stream) return;
     
     setIsRecording(true);
@@ -441,9 +455,9 @@ const Practice = () => {
     setFinalTranscript("");
     setInterimTranscript("");
     setFeedback("");
-    speechAnalyzerRef.current.reset();
-    contentAnalyzerRef.current.reset();
-    fusionAlgorithmRef.current.reset();
+    memoizedSpeechAnalyzer.reset();
+    memoizedContentAnalyzer.reset();
+    memoizedFusionAlgorithm.reset();
     lastBackendAnalysisRef.current = 0;
 
     // Initialize advanced audio analyzer with the stream
@@ -475,18 +489,15 @@ const Practice = () => {
     if (speechRecognitionRef.current) {
       speechRecognitionRef.current.stop();
     }
-
     // Cleanup audio analyzer
     if (audioAnalyzerRef.current) {
       audioAnalyzerRef.current.cleanup();
     }
-
     // Stop animation frame
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
     }
-
-    const finalAnalysis = speechAnalyzerRef.current.getMetrics();
+    const finalAnalysis = memoizedSpeechAnalyzer.getMetrics();
     
     toast({
       title: "Recording Stopped",
@@ -495,14 +506,14 @@ const Practice = () => {
     
     // Navigate to results with complete data
     setTimeout(() => {
-      navigate("/results", { 
-        state: { 
+      navigate("/results", {
+        state: {
           duration: recordingTime,
           metrics: metrics,
           transcript: finalTranscript,
           speechAnalysis: finalAnalysis,
           feedback: feedback,
-        } 
+        }
       });
     }, 2000);
   };
@@ -512,6 +523,8 @@ const Practice = () => {
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
+
+  const displayMetric = (value: number | null) => value !== null ? `${value}` : 'N/A';
 
   return (
     <div className="min-h-screen bg-gradient-hero p-4">
@@ -527,7 +540,6 @@ const Practice = () => {
             Back to Home
           </Button>
         </div>
-
         <div className="grid lg:grid-cols-3 gap-6">
           {/* Main Video Area */}
           <div className="lg:col-span-2">
@@ -541,8 +553,8 @@ const Practice = () => {
                   className="w-full h-full object-cover"
                 />
                 <canvas ref={canvasRef} className="hidden" />
-                <canvas 
-                  ref={overlayCanvasRef} 
+                <canvas
+                  ref={overlayCanvasRef}
                   className="absolute inset-0 w-full h-full pointer-events-none"
                   style={{ objectFit: 'cover' }}
                 />
@@ -555,7 +567,6 @@ const Practice = () => {
                     </div>
                   </div>
                 )}
-
                 {isRecording && (
                   <>
                     <div className="absolute top-4 left-4 flex flex-col gap-2">
@@ -571,11 +582,9 @@ const Practice = () => {
                         </div>
                       )}
                     </div>
-
                     <div className="absolute top-4 right-4 px-4 py-2 bg-background/90 rounded-full">
                       <span className="text-lg font-bold text-primary">{formatTime(recordingTime)}</span>
                     </div>
-
                     {feedback && (
                       <div className="absolute bottom-4 left-4 right-4">
                         <div className="px-4 py-3 bg-primary/90 rounded-lg">
@@ -586,7 +595,6 @@ const Practice = () => {
                   </>
                 )}
               </div>
-
               {/* Controls */}
               <div className="flex justify-center gap-4">
                 {!isCameraOn ? (
@@ -628,7 +636,6 @@ const Practice = () => {
                         </>
                       )}
                     </Button>
-
                     {!isRecording ? (
                       <Button
                         size="lg"
@@ -654,7 +661,6 @@ const Practice = () => {
               </div>
             </Card>
           </div>
-
           {/* Real-Time Analytics */}
           <div className="space-y-4">
             <Card className="p-6 bg-gradient-card border-border">
@@ -673,58 +679,54 @@ const Practice = () => {
                   <div>
                     <div className="flex justify-between mb-2">
                       <span className="text-sm text-muted-foreground">Eye Contact</span>
-                      <span className="text-sm font-bold text-primary">{metrics.eyeContact}%</span>
+                      <span className="text-sm font-bold text-primary">{displayMetric(metrics.eyeContact)}%</span>
                     </div>
                     <div className="h-2 bg-secondary rounded-full overflow-hidden">
                       <div
                         className="h-full bg-gradient-primary transition-all duration-500"
-                        style={{ width: `${metrics.eyeContact}%` }}
+                        style={{ width: `${metrics.eyeContact ?? 0}%` }}
                       />
                     </div>
                   </div>
-
                   {/* Posture */}
                   <div>
                     <div className="flex justify-between mb-2">
                       <span className="text-sm text-muted-foreground">Posture</span>
-                      <span className="text-sm font-bold text-primary">{metrics.posture}%</span>
+                      <span className="text-sm font-bold text-primary">{displayMetric(metrics.posture)}%</span>
                     </div>
                     <div className="h-2 bg-secondary rounded-full overflow-hidden">
                       <div
                         className="h-full bg-gradient-secondary transition-all duration-500"
-                        style={{ width: `${metrics.posture}%` }}
+                        style={{ width: `${metrics.posture ?? 0}%` }}
                       />
                     </div>
                   </div>
-
                   {/* Clarity */}
                   <div>
                     <div className="flex justify-between mb-2">
                       <span className="text-sm text-muted-foreground">Clarity</span>
-                      <span className="text-sm font-bold text-primary">{metrics.clarity}%</span>
+                      <span className="text-sm font-bold text-primary">{displayMetric(metrics.clarity)}%</span>
                     </div>
                     <div className="h-2 bg-secondary rounded-full overflow-hidden">
                       <div
                         className="h-full bg-gradient-accent transition-all duration-500"
-                        style={{ width: `${metrics.clarity}%` }}
+                        style={{ width: `${metrics.clarity ?? 0}%` }}
                       />
                     </div>
                   </div>
-
                   {/* Engagement */}
                   <div>
                     <div className="flex justify-between mb-2">
                       <span className="text-sm text-muted-foreground">Engagement</span>
-                      <span className="text-sm font-bold text-primary">{metrics.engagement}%</span>
+                      <span className="text-sm font-bold text-primary">{displayMetric(metrics.engagement)}%</span>
                     </div>
                     <div className="h-2 bg-secondary rounded-full overflow-hidden">
                       <div
                         className="h-full bg-gradient-primary transition-all duration-500"
-                        style={{ width: `${metrics.engagement}%` }}
+                        style={{ width: `${metrics.engagement ?? 0}%` }}
                       />
                     </div>
                   </div>
-
                   {/* Audio Level */}
                   <div>
                     <div className="flex justify-between mb-2">
@@ -738,7 +740,6 @@ const Practice = () => {
                       />
                     </div>
                   </div>
-
                   {/* Additional Metrics */}
                   <div className="grid grid-cols-2 gap-3 pt-4 border-t border-border">
                     <div className="text-center">
@@ -747,15 +748,15 @@ const Practice = () => {
                     </div>
                     <div className="text-center">
                       <p className="text-xs text-muted-foreground mb-1">Gestures</p>
-                      <p className="text-sm font-bold text-foreground">{metrics.gestureVariety}%</p>
+                      <p className="text-sm font-bold text-foreground">{displayMetric(metrics.gestureVariety)}%</p>
                     </div>
                     <div className="text-center">
                       <p className="text-xs text-muted-foreground mb-1">Pitch</p>
-                      <p className="text-sm font-bold text-foreground">{metrics.pitch} Hz</p>
+                      <p className="text-sm font-bold text-foreground">{displayMetric(metrics.pitch)} Hz</p>
                     </div>
                     <div className="text-center">
                       <p className="text-xs text-muted-foreground mb-1">Volume</p>
-                      <p className="text-sm font-bold text-foreground">{metrics.volume} dB</p>
+                      <p className="text-sm font-bold text-foreground">{displayMetric(metrics.volume)} dB</p>
                     </div>
                   </div>
                 </div>
