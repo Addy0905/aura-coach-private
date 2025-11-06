@@ -1,7 +1,6 @@
 // Multi-Modal Fusion Algorithm for Persona AI
 // Real-time sensor fusion with adaptive weighting and Kalman-inspired smoothing
 // Zero-latency processing with intelligent zero-state detection
-
 export interface RawMetrics {
   // Vision metrics from MediaPipe
   eyeContact: number; // 0-100
@@ -12,7 +11,7 @@ export interface RawMetrics {
   headPosition: number; // 0-100
   gestureVariety: number; // 0-100
   handVisibility: number; // 0-100
-  
+ 
   // Audio metrics from Web Audio API
   pitch: number; // Hz
   pitchVariation: number; // 0-100
@@ -20,7 +19,7 @@ export interface RawMetrics {
   volumeVariation: number; // 0-100
   clarity: number; // 0-100 (from audio analysis)
   energy: number; // Audio energy
-  
+ 
   // Speech metrics from Web Speech API
   wordsPerMinute: number;
   fillerCount: number;
@@ -29,7 +28,6 @@ export interface RawMetrics {
   fluencyScore: number; // 0-100
   articulationScore: number; // 0-100
 }
-
 export interface FusedMetrics {
   eyeContact: number;
   posture: number;
@@ -41,7 +39,6 @@ export interface FusedMetrics {
   overallScore: number;
   confidence: number;
 }
-
 export interface ContextWeights {
   eyeContact: number;
   posture: number;
@@ -51,7 +48,6 @@ export interface ContextWeights {
   speechClarity: number;
   contentEngagement: number;
 }
-
 // Weight configurations for different contexts
 const CONTEXT_WEIGHTS: Record<string, ContextWeights> = {
   professional: {
@@ -81,50 +77,57 @@ const CONTEXT_WEIGHTS: Record<string, ContextWeights> = {
     speechClarity: 0.15,
     contentEngagement: 0.15,
   },
+  interview: { // Added new context for interviews
+    eyeContact: 0.22,
+    posture: 0.18,
+    bodyLanguage: 0.12,
+    facialExpression: 0.18,
+    voiceQuality: 0.12,
+    speechClarity: 0.13,
+    contentEngagement: 0.05,
+  },
 };
-
 /**
  * ALGORITHM EXPLANATION:
- * 
+ *
  * This implements a MULTI-MODAL SENSOR FUSION ALGORITHM with:
- * 
+ *
  * 1. WEIGHTED FUSION - Combines vision, audio, and speech data
- *    - Each modality contributes based on context (professional/presentation/casual)
- *    - Uses weighted averaging to merge correlated metrics
- * 
+ * - Each modality contributes based on context (professional/presentation/casual/interview)
+ * - Uses weighted averaging to merge correlated metrics
+ *
  * 2. KALMAN-INSPIRED SMOOTHING - Reduces noise while staying responsive
- *    - Exponential moving average (EMA) with adaptive alpha
- *    - Balances current measurement vs historical trend
- *    - Formula: smoothed = α * current + (1-α) * previous
- * 
+ * - Exponential moving average (EMA) with adaptive alpha
+ * - Balances current measurement vs historical trend
+ * - Formula: smoothed = α * current + (1-α) * previous
+ *
  * 3. CONFIDENCE SCORING - Quality assessment of input data
- *    - Bayesian-style confidence reduction for missing/poor inputs
- *    - Helps UI know when scores are unreliable
- * 
+ * - Bayesian-style confidence reduction for missing/poor inputs
+ * - Helps UI know when scores are unreliable
+ *
  * 4. ZERO-STATE DETECTION - Intelligent null detection
- *    - Returns 0 when no face/voice detected (not artificial minimums)
- *    - Prevents false scores from noise
- * 
+ * - Returns 0 when no face/voice detected (not artificial minimums)
+ * - Prevents false scores from noise
+ *
  * 5. REAL-TIME NORMALIZATION - Converts all metrics to 0-100 scale
- *    - Handles different sensor ranges (dB, Hz, percentages)
- *    - Non-linear curves for WPM (optimal at 120-150)
+ * - Handles different sensor ranges (dB, Hz, percentages)
+ * - Non-linear curves for WPM (optimal at 120-150)
  */
 export class FusionAlgorithm {
-  private context: string = 'presentation';
+  private context: string = 'interview'; // Changed default to 'interview' for persona coach
   private previousMetrics: FusedMetrics | null = null;
-  private readonly SMOOTHING_ALPHA = 0.7; // Higher = more responsive (0.7 = 70% current, 30% history)
-  private readonly CONFIDENCE_THRESHOLD = 40; // Below this, scores are unreliable
-
+  private readonly SMOOTHING_ALPHA = 0.6; // Slightly lower for more stability, less jitter
+  private readonly CONFIDENCE_THRESHOLD = 50; // Raised threshold for stricter quality check
+  private readonly MIN_CONFIDENCE = 0; // Ensure confidence can reach 0
   setContext(context: string): void {
     if (CONTEXT_WEIGHTS[context]) {
       this.context = context;
     }
   }
-
   /**
    * MAIN FUSION PIPELINE
    * Processes raw sensor data into unified performance scores
-   * 
+   *
    * Pipeline: Raw Input → Zero Check → Normalize → Aggregate → Weight → Smooth → Output
    */
   fuse(raw: RawMetrics): FusedMetrics {
@@ -135,19 +138,18 @@ export class FusionAlgorithm {
       this.previousMetrics = zeros;
       return zeros;
     }
-
     // STEP 2: NORMALIZATION (all metrics → 0-100 scale)
     const norm = this.normalizeMetrics(raw);
-    
+   
     // STEP 3: FEATURE AGGREGATION (combine related metrics)
     const features = this.aggregateFeatures(norm);
-    
+   
     // STEP 4: CONTEXT-BASED WEIGHTING (apply importance weights)
     const overallScore = this.applyContextWeights(features);
-    
+   
     // STEP 5: CONFIDENCE CALCULATION (data quality assessment)
     const confidence = this.calculateConfidence(raw);
-    
+   
     // Create current frame metrics
     const current: FusedMetrics = {
       eyeContact: Math.round(features.eyeContact),
@@ -160,30 +162,28 @@ export class FusionAlgorithm {
       overallScore: Math.round(overallScore),
       confidence: Math.round(confidence),
     };
-    
+   
     // STEP 6: TEMPORAL SMOOTHING (Kalman-inspired EMA)
     const smoothed = this.applyAdaptiveSmoothing(current, confidence);
-    
+   
     // Store for next iteration
     this.previousMetrics = smoothed;
-    
+   
     return smoothed;
   }
-
   /**
    * ZERO-STATE DETECTION
    * Returns true if no meaningful input is detected
    * Prevents false scores from sensor noise
    */
   private isZeroState(raw: RawMetrics): boolean {
-    const noFace = raw.eyeContact < 5 && raw.postureScore < 5;
-    const noAudio = raw.volume < -55 && raw.energy < 5;
-    const noSpeech = raw.wordsPerMinute === 0 && raw.clarityScore < 5;
-    
-    // Zero state = (no face AND no audio) OR (no face AND no speech)
-    return (noFace && noAudio) || (noFace && noSpeech);
+    const noFace = raw.eyeContact < 10 && raw.postureScore < 10 && raw.emotionConfidence < 0.1; // Stricter: added emotionConfidence
+    const noAudio = raw.volume < -50 && raw.energy < 10 && raw.clarity < 10; // Stricter thresholds
+    const noSpeech = raw.wordsPerMinute < 5 && raw.clarityScore < 10 && raw.fluencyScore < 10; // Added fluency check
+   
+    // Zero state = noFace OR (noAudio AND noSpeech)
+    return noFace || (noAudio && noSpeech);
   }
-
   /**
    * Creates zero metrics when no input detected
    */
@@ -200,7 +200,6 @@ export class FusionAlgorithm {
       confidence: 0,
     };
   }
-
   /**
    * STEP 2: NORMALIZATION
    * Converts all sensor readings to unified 0-100 scale
@@ -216,23 +215,22 @@ export class FusionAlgorithm {
       gestureVariety: this.clamp(raw.gestureVariety, 0, 100),
       handVisibility: this.clamp(raw.handVisibility, 0, 100),
       emotionConfidence: this.clamp(raw.emotionConfidence * 100, 0, 100),
-      
+     
       // Audio metrics (convert to 0-100)
       pitchVariation: this.clamp(raw.pitchVariation, 0, 100),
       volumeNormalized: this.normalizeVolume(raw.volume),
       volumeVariation: this.clamp(raw.volumeVariation, 0, 100),
       audioClarity: this.clamp(raw.clarity, 0, 100),
       energy: this.normalizeEnergy(raw.energy),
-      
+     
       // Speech metrics (already 0-100, just clamp)
       wpmScore: this.normalizeWPM(raw.wordsPerMinute),
-      fillerScore: this.clamp(100 - (raw.fillerPercentage * 2), 0, 100),
+      fillerScore: this.clamp(100 - (raw.fillerPercentage * 3), 0, 100), // Stronger penalty for fillers
       speechClarity: this.clamp(raw.clarityScore, 0, 100),
       fluency: this.clamp(raw.fluencyScore, 0, 100),
       articulation: this.clamp(raw.articulationScore, 0, 100),
     };
   }
-
   /**
    * STEP 3: FEATURE AGGREGATION
    * Combines correlated metrics using weighted averaging
@@ -241,53 +239,54 @@ export class FusionAlgorithm {
   private aggregateFeatures(norm: Record<string, number>): Record<string, number> {
     return {
       eyeContact: norm.eyeContact,
-      
+     
       // Posture = body position + alignment
       posture: (
         norm.postureScore * 0.5 +
         norm.shoulderAlignment * 0.3 +
         norm.headPosition * 0.2
       ),
-      
+     
       // Body Language = gestures + hand movement
       bodyLanguage: (
         norm.gestureVariety * 0.6 +
         norm.handVisibility * 0.4
       ),
-      
+     
       facialExpression: norm.emotionConfidence,
-      
-      // Voice Quality = volume + clarity + energy
+     
+      // Voice Quality = volume + clarity + energy + pitch variation
       voiceQuality: (
-        norm.volumeNormalized * 0.3 +
-        norm.audioClarity * 0.4 +
-        norm.energy * 0.3
+        norm.volumeNormalized * 0.25 +
+        norm.audioClarity * 0.35 +
+        norm.energy * 0.25 +
+        norm.pitchVariation * 0.15 // Added pitch variation for better voice assessment
       ),
-      
-      // Speech Clarity = articulation + fluency
+     
+      // Speech Clarity = articulation + fluency + speech clarity
       speechClarity: (
         norm.speechClarity * 0.4 +
         norm.articulation * 0.3 +
         norm.fluency * 0.3
       ),
-      
-      // Content Engagement = pacing + filler reduction
+     
+      // Content Engagement = pacing + filler reduction + volume variation
       contentEngagement: (
-        norm.wpmScore * 0.5 +
-        norm.fillerScore * 0.5
+        norm.wpmScore * 0.4 +
+        norm.fillerScore * 0.4 +
+        norm.volumeVariation * 0.2 // Added variation for engagement
       ),
     };
   }
-
   /**
    * STEP 4: CONTEXT-BASED WEIGHTED FUSION
    * Applies different importance to features based on scenario
-   * 
+   *
    * Example: Presentation = 25% eye contact, 15% posture
    */
   private applyContextWeights(features: Record<string, number>): number {
     const w = CONTEXT_WEIGHTS[this.context];
-    
+   
     return (
       features.eyeContact * w.eyeContact +
       features.posture * w.posture +
@@ -298,7 +297,6 @@ export class FusionAlgorithm {
       features.contentEngagement * w.contentEngagement
     );
   }
-
   /**
    * STEP 5: CONFIDENCE CALCULATION
    * Bayesian-inspired quality assessment
@@ -306,26 +304,26 @@ export class FusionAlgorithm {
    */
   private calculateConfidence(raw: RawMetrics): number {
     let confidence = 100;
-    
-    // Apply penalties for missing or low-quality inputs
-    if (raw.eyeContact < 10) confidence -= 20; // No face detected
-    if (raw.volume < -50) confidence -= 15; // Too quiet
-    if (raw.wordsPerMinute === 0) confidence -= 10; // No speech
-    if (raw.emotionConfidence < 0.3) confidence -= 10; // Uncertain emotion
-    if (raw.clarity < 30) confidence -= 10; // Poor audio clarity
-    if (raw.postureScore < 20) confidence -= 10; // Poor posture detection
-    
-    return this.clamp(confidence, 0, 100);
+   
+    // Apply penalties for missing or low-quality inputs - stronger penalties
+    if (raw.eyeContact < 15) confidence -= 25; // No face detected - stricter
+    if (raw.volume < -45) confidence -= 20; // Too quiet - stricter threshold
+    if (raw.wordsPerMinute < 10) confidence -= 15; // No speech - stricter
+    if (raw.emotionConfidence < 0.4) confidence -= 15; // Uncertain emotion - stricter
+    if (raw.clarity < 40) confidence -= 15; // Poor audio clarity - stricter
+    if (raw.postureScore < 25) confidence -= 15; // Poor posture detection - stricter
+    if (raw.fillerPercentage > 15) confidence -= 10; // Added filler penalty for poor speech
+   
+    return this.clamp(confidence, this.MIN_CONFIDENCE, 100);
   }
-
   /**
    * STEP 6: ADAPTIVE TEMPORAL SMOOTHING
    * Kalman-inspired exponential moving average (EMA)
-   * 
+   *
    * Formula: smoothed = α * current + (1-α) * previous
    * - α = SMOOTHING_ALPHA (0.7 = 70% current, 30% history)
    * - Adapts based on confidence: low confidence = more smoothing
-   * 
+   *
    * Benefits:
    * - Reduces jitter/flickering
    * - Stays responsive to real changes
@@ -335,16 +333,14 @@ export class FusionAlgorithm {
     if (!this.previousMetrics) {
       return current; // First frame, no history
     }
-
     // Adapt smoothing based on confidence
     // Low confidence = smooth more (reduce noise)
     // High confidence = smooth less (stay responsive)
-    const adaptiveAlpha = confidence > this.CONFIDENCE_THRESHOLD 
-      ? this.SMOOTHING_ALPHA 
-      : this.SMOOTHING_ALPHA * 0.6; // Smooth more when uncertain
-
+    const adaptiveAlpha = confidence > this.CONFIDENCE_THRESHOLD
+      ? this.SMOOTHING_ALPHA
+      : this.SMOOTHING_ALPHA * 0.5; // Even more smoothing when uncertain
     const prev = this.previousMetrics;
-    
+   
     return {
       eyeContact: Math.round(adaptiveAlpha * current.eyeContact + (1 - adaptiveAlpha) * prev.eyeContact),
       posture: Math.round(adaptiveAlpha * current.posture + (1 - adaptiveAlpha) * prev.posture),
@@ -357,13 +353,10 @@ export class FusionAlgorithm {
       confidence: Math.round(adaptiveAlpha * current.confidence + (1 - adaptiveAlpha) * prev.confidence),
     };
   }
-
   // ========== UTILITY METHODS ==========
-
   private clamp(value: number, min: number, max: number): number {
     return Math.max(min, Math.min(max, value));
   }
-
   /**
    * VOLUME NORMALIZATION
    * Converts dB (-60 to 0) → 0-100 scale
@@ -375,7 +368,6 @@ export class FusionAlgorithm {
     if (volumeDB > 0) return 100;
     return ((volumeDB + 60) / 60) * 100;
   }
-
   /**
    * ENERGY NORMALIZATION
    * Typical audio energy range: 0-200 → 0-100 scale
@@ -383,7 +375,6 @@ export class FusionAlgorithm {
   private normalizeEnergy(energy: number): number {
     return this.clamp((energy / 200) * 100, 0, 100);
   }
-
   /**
    * WPM NORMALIZATION WITH OPTIMAL CURVE
    * Non-linear scoring:
@@ -393,7 +384,7 @@ export class FusionAlgorithm {
    */
   private normalizeWPM(wpm: number): number {
     if (wpm === 0) return 0;
-    
+   
     if (wpm >= 120 && wpm <= 150) {
       return 100; // Optimal range
     } else if (wpm < 120) {
@@ -405,14 +396,12 @@ export class FusionAlgorithm {
       return Math.max(50, 100 - penalty);
     }
   }
-
   /**
    * Reset algorithm state (clears history)
    */
   reset(): void {
     this.previousMetrics = null;
   }
-
   /**
    * Get current smoothing state (for debugging)
    */
@@ -420,6 +409,5 @@ export class FusionAlgorithm {
     return this.previousMetrics ? { ...this.previousMetrics } : null;
   }
 }
-
 // Export singleton instance for easy usage
 export const fusionAlgorithm = new FusionAlgorithm();
