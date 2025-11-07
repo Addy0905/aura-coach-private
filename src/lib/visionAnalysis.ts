@@ -296,14 +296,14 @@ export class VisionAnalyzer {
     ) / 2;
     
     // AU9: Nose Wrinkler (Disgust)
-    const noseLeft = landmarks[98];
-    const noseRight = landmarks[327];
+    const noseLeft = landmarks[2];
+    const noseRight = landmarks[2];
     const noseTip = landmarks[1];
     const noseWrinkle = this.euclideanDist(noseLeft, noseRight) / this.euclideanDist(noseLeft, noseTip);
     
     // AU10: Upper Lip Raiser (Disgust)
     const upperLipTop = landmarks[0];
-    const upperLipBottom = landmarks[13];
+    const upperLipBottom = landmarks[1];
     const lipRaise = upperLipTop.y - upperLipBottom.y;
     
     // AU12: Lip Corner Puller (Smile)
