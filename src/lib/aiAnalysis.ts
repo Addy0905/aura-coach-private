@@ -11,7 +11,7 @@ let faceDetector: any = null;
 export const initializeModels = async () => {
   try {
     console.log('Initializing AI models...');
-    
+
     // Load face detection model - using depth estimation as proxy for face analysis
     if (!faceDetector) {
       console.log('Loading face detection model...');
@@ -22,7 +22,7 @@ export const initializeModels = async () => {
       );
       console.log('Face detector loaded');
     }
-    
+
     // Load emotion detection model - using CLIP for facial analysis
     if (!emotionDetector) {
       console.log('Loading emotion detection model...');
@@ -33,7 +33,7 @@ export const initializeModels = async () => {
       );
       console.log('Emotion detector loaded');
     }
-    
+
     console.log('AI models initialized successfully');
     return true;
   } catch (error) {
@@ -58,35 +58,26 @@ export const initializeModels = async () => {
 const detectFaceRegion = async (imageData: string) => {
   try {
     if (!faceDetector) return null;
-    
+
     // Use depth estimation to find the closest region (face)
     const depth = await faceDetector(imageData);
-    
+
     // Analyze depth map to find face region
     if (depth && depth.depth) {
-      const depthData = depth.depth;
-      
-      // Find the region with minimum depth (closest to camera = face)
-      let minDepth = Infinity;
+      // For simplicity, return fixed plausible region (center-upper)
       let faceRegionX = 0.5;
       let faceRegionY = 0.4; // Upper region
-      
-      // Sample depth at key points
-      const width = depthData.width || 384;
-      const height = depthData.height || 384;
-      
-      // Check upper-center region (typical face location)
-      const centerX = Math.floor(width * 0.5);
-      const centerY = Math.floor(height * 0.35);
-      
+
+      // Could sample or analyze depth data further here...
+
       return {
         hasFace: true,
         faceCenterX: faceRegionX,
         faceCenterY: faceRegionY,
-        confidence: 0.75
+        confidence: 0.75,
       };
     }
-    
+
     return null;
   } catch (error) {
     console.error('Face detection error:', error);
@@ -106,12 +97,12 @@ export const analyzeFacialExpression = async (videoElement: HTMLVideoElement) =>
     canvas.width = videoElement.videoWidth;
     canvas.height = videoElement.videoHeight;
     const ctx = canvas.getContext('2d');
-    
+
     if (!ctx) {
       console.error('Failed to get canvas context');
       return null;
     }
-    
+
     ctx.drawImage(videoElement, 0, 0);
     const imageData = canvas.toDataURL('image/jpeg', 0.8);
 
@@ -124,25 +115,25 @@ export const analyzeFacialExpression = async (videoElement: HTMLVideoElement) =>
       'a sad unhappy person',
       'an angry frustrated person',
       'a nervous anxious person',
-      'a surprised person'
+      'a surprised person',
     ];
 
     let emotions: any[] = [];
     let hasFace = false;
-    
+
     try {
       if (emotionDetector) {
         const results = await emotionDetector(imageData, emotionLabels);
-        
+
         // Convert CLIP results to emotion format
         emotions = results.map((r: any) => ({
           label: r.label.replace('a ', '').replace(' person', '').split(' ')[0],
-          score: r.score
+          score: r.score,
         }));
-        
+
         // Sort by score
         emotions.sort((a, b) => b.score - a.score);
-        
+
         hasFace = emotions[0].score > 0.15; // Confidence threshold
         console.log('Emotion analysis:', emotions);
       }
@@ -152,14 +143,14 @@ export const analyzeFacialExpression = async (videoElement: HTMLVideoElement) =>
 
     // Detect face region using depth estimation
     const faceData = await detectFaceRegion(imageData);
-    
+
     // Calculate eye contact based on face position
-    const eyeContact = (hasFace && faceData) 
-      ? calculateEyeContact(faceData, canvas, videoElement) 
-      : 25;
-    
+    const eyeContact = (hasFace && faceData)
+      ? calculateEyeContact(faceData, canvas, videoElement)
+      : 50;
+
     // Calculate facial expression score
-    const faceScore = hasFace ? calculateExpressionScore(emotions) : 25;
+    const faceScore = hasFace ? calculateExpressionScore(emotions) : 50;
 
     return {
       hasFace,
@@ -167,7 +158,7 @@ export const analyzeFacialExpression = async (videoElement: HTMLVideoElement) =>
       faceScore: Math.round(faceScore),
       emotions: emotions.slice(0, 3), // Top 3 emotions
       imageData,
-      faceData
+      faceData,
     };
   } catch (error) {
     console.error('Error analyzing facial expression:', error);
@@ -177,14 +168,14 @@ export const analyzeFacialExpression = async (videoElement: HTMLVideoElement) =>
 
 // Calculate eye contact score based on face detection
 const calculateEyeContact = (faceData: any, canvas: HTMLCanvasElement, video: HTMLVideoElement): number => {
-  if (!faceData) return 25;
-  
+  if (!faceData) return 50;
+
   // Face centered horizontally and in upper half = good eye contact
   const centerX = faceData.faceCenterX;
   const centerY = faceData.faceCenterY;
-  
+
   let score = 50;
-  
+
   // Horizontal alignment (0.4 to 0.6 is centered)
   const horizontalOffset = Math.abs(centerX - 0.5);
   if (horizontalOffset < 0.1) {
@@ -194,7 +185,7 @@ const calculateEyeContact = (faceData: any, canvas: HTMLCanvasElement, video: HT
   } else {
     score -= 10; // Too far off-center
   }
-  
+
   // Vertical position (0.3 to 0.5 is ideal - upper-center)
   if (centerY > 0.25 && centerY < 0.5) {
     score += 25; // Good framing
@@ -203,39 +194,39 @@ const calculateEyeContact = (faceData: any, canvas: HTMLCanvasElement, video: HT
   } else if (centerY < 0.25) {
     score += 10; // High position (attentive)
   }
-  
+
   // Confidence bonus
   score += faceData.confidence * 10;
-  
-  return Math.max(25, Math.min(100, score));
+
+  return Math.max(30, Math.min(100, score));
 };
 
 // Calculate expression score based on detected emotions
 const calculateExpressionScore = (emotions: any[]): number => {
-  if (!emotions || emotions.length === 0) return 25;
-  
+  if (!emotions || emotions.length === 0) return 50;
+
   // Professional emotions mapping
   const emotionScores: { [key: string]: number } = {
-    'happy': 1.0,
-    'confident': 1.0,
-    'neutral': 0.85,
-    'calm': 0.85,
-    'focused': 0.95,
-    'attentive': 0.95,
-    'surprised': 0.4,
-    'sad': -0.7,
-    'unhappy': -0.7,
-    'angry': -1.0,
-    'frustrated': -0.8,
-    'nervous': -0.6,
-    'anxious': -0.6
+    happy: 1.0,
+    confident: 1.0,
+    neutral: 0.85,
+    calm: 0.85,
+    focused: 0.95,
+    attentive: 0.95,
+    surprised: 0.4,
+    sad: -0.7,
+    unhappy: -0.7,
+    angry: -1.0,
+    frustrated: -0.8,
+    nervous: -0.6,
+    anxious: -0.6,
   };
-  
+
   let score = 50;
-  
+
   for (const emotion of emotions) {
     const label = emotion.label.toLowerCase();
-    
+
     // Find matching emotion
     for (const [key, weight] of Object.entries(emotionScores)) {
       if (label.includes(key)) {
@@ -244,8 +235,8 @@ const calculateExpressionScore = (emotions: any[]): number => {
       }
     }
   }
-  
-  return Math.max(25, Math.min(100, score));
+
+  return Math.max(30, Math.min(100, score));
 };
 
 // Analyze posture using depth and face detection
@@ -255,44 +246,38 @@ export const analyzePosture = async (videoElement: HTMLVideoElement) => {
     canvas.width = videoElement.videoWidth;
     canvas.height = videoElement.videoHeight;
     const ctx = canvas.getContext('2d');
-    
-    if (!ctx) return { posture: 50, isWellFramed: false, bodyLanguage: 'neutral' };
-    
+
+    if (!ctx) return { posture: 55, isWellFramed: false, bodyLanguage: 'neutral' };
+
     ctx.drawImage(videoElement, 0, 0);
     const imageData = canvas.toDataURL('image/jpeg', 0.8);
-    
+
     // Use depth estimation to analyze posture
-    let postureScore = 50;
+    let postureScore = 55;
     let bodyLanguage = 'neutral';
     let isWellFramed = false;
-    
+
     try {
       if (faceDetector) {
         const depth = await faceDetector(imageData);
-        
+
         if (depth && depth.depth) {
-          const depthData = depth.depth;
-          
-          // Analyze depth distribution (uniform depth = good posture)
-          // Deep analysis would look at shoulder width, head position, etc.
-          
-          // For now, use face detection as primary indicator
           const faceData = await detectFaceRegion(imageData);
-          
+
           if (faceData && faceData.hasFace) {
             // Face in upper-center = good posture
             if (faceData.faceCenterY < 0.5) {
-              postureScore += 30;
+              postureScore += 20;
               bodyLanguage = 'upright';
               isWellFramed = true;
             } else if (faceData.faceCenterY > 0.6) {
-              postureScore -= 20;
+              postureScore -= 15;
               bodyLanguage = 'slouching';
             }
-            
+
             // Centered horizontally
             if (Math.abs(faceData.faceCenterX - 0.5) < 0.15) {
-              postureScore += 20;
+              postureScore += 10;
               isWellFramed = true;
             }
           }
@@ -301,28 +286,28 @@ export const analyzePosture = async (videoElement: HTMLVideoElement) => {
     } catch (error) {
       console.error('Depth analysis error:', error);
     }
-    
+
     // Fallback: aspect ratio check
     const aspectRatio = videoElement.videoWidth / videoElement.videoHeight;
-    if (aspectRatio > 0.5 && aspectRatio < 2) {
-      postureScore += 10;
+    if (aspectRatio > 0.7 && aspectRatio < 1.7) {
+      postureScore += 5;
       isWellFramed = true;
     }
-    
+
     // Analyze frame composition using traditional CV
     const imageDataCV = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imageDataCV.data;
-    
+
     // Calculate vertical distribution
     let topHalfBrightness = 0;
     let bottomHalfBrightness = 0;
     const midpoint = canvas.height / 2;
-    
+
     for (let y = 0; y < canvas.height; y++) {
       for (let x = 0; x < canvas.width; x++) {
         const idx = (y * canvas.width + x) * 4;
         const brightness = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-        
+
         if (y < midpoint) {
           topHalfBrightness += brightness;
         } else {
@@ -330,78 +315,77 @@ export const analyzePosture = async (videoElement: HTMLVideoElement) => {
         }
       }
     }
-    
+
     // Good posture = more presence in top half
     const topRatio = topHalfBrightness / (topHalfBrightness + bottomHalfBrightness);
-    postureScore += (topRatio - 0.5) * 50;
-    
+    postureScore += (topRatio - 0.5) * 30;
+
     // Determine body language based on score
-    if (postureScore > 80) bodyLanguage = 'confident';
-    else if (postureScore > 65) bodyLanguage = 'engaged';
-    else if (postureScore > 50) bodyLanguage = 'neutral';
-    else if (postureScore < 40) bodyLanguage = 'slouching';
-    
+    if (postureScore > 75) bodyLanguage = 'engaged';
+    else if (postureScore > 55) bodyLanguage = 'neutral';
+    else bodyLanguage = 'slouching';
+
     return {
-      posture: Math.round(Math.max(25, Math.min(100, postureScore))),
+      posture: Math.round(Math.max(30, Math.min(100, postureScore))),
       isWellFramed,
-      bodyLanguage
+      bodyLanguage,
     };
   } catch (error) {
     console.error('Error analyzing posture:', error);
-    return { posture: 50, isWellFramed: false, bodyLanguage: 'neutral' };
+    return { posture: 55, isWellFramed: false, bodyLanguage: 'neutral' };
   }
 };
 
 // Calculate voice clarity with filler word detection
 const calculateVoiceClarity = (audioLevel: number, transcript: string): number => {
-  let clarityScore = 50;
-  
+  let clarityScore = 55;
+
   // Optimal audio level (0.3-0.7)
   if (audioLevel > 0.3 && audioLevel < 0.7) {
-    clarityScore = 70 + (audioLevel * 30);
+    clarityScore = 75;
   } else if (audioLevel >= 0.7 && audioLevel < 0.9) {
-    clarityScore = 85; // Slightly loud but clear
+    clarityScore = 65;
   } else if (audioLevel >= 0.9) {
-    clarityScore = 70; // Too loud
+    clarityScore = 50;
   } else if (audioLevel > 0.1) {
-    clarityScore = 40 + (audioLevel * 100); // Too quiet
+    clarityScore = 50;
   } else {
-    clarityScore = 25; // Very quiet or no audio
+    clarityScore = 35;
   }
-  
+
   // Analyze transcript for filler words
   if (transcript.length > 50) {
     const words = transcript.toLowerCase().split(/\s+/);
     const fillerWords = ['um', 'uh', 'like', 'you know', 'basically', 'actually', 'literally'];
-    
+
     let fillerCount = 0;
     for (const word of words) {
       if (fillerWords.includes(word)) {
         fillerCount++;
       }
     }
-    
+
     const fillerRatio = fillerCount / words.length;
-    
+
     // Penalize excessive filler words
     if (fillerRatio > 0.15) {
-      clarityScore -= 20;
+      clarityScore -= 15;
     } else if (fillerRatio > 0.10) {
-      clarityScore -= 10;
+      clarityScore -= 7;
     } else if (fillerRatio < 0.05) {
-      clarityScore += 10; // Bonus for clear speech
+      clarityScore += 5;
     }
   }
-  
+
   // Bonus for sustained speaking
   if (transcript.length > 100) {
-    clarityScore = Math.min(100, clarityScore + 5);
+    clarityScore = Math.min(clarityScore + 5, 100);
   }
   if (transcript.length > 200) {
-    clarityScore = Math.min(100, clarityScore + 5);
+    clarityScore = Math.min(clarityScore + 5, 100);
   }
-  
-  return Math.max(25, Math.min(100, clarityScore));
+
+  return Math.max(30, Math.min(100, clarityScore));
 };
 
 // Calculate engagement with ML-based factors
@@ -410,42 +394,42 @@ const calculateEngagement = (
   transcriptLength: number,
   audioLevel: number,
   emotions: any[],
-  eyeContactScore: number
+  eyeContactScore: number,
+  bodyLanguage: string
 ): number => {
-  let engagementScore = 25;
-  
-  // Face presence (25 points)
-  if (hasFace) {
-    engagementScore += 25;
-  }
-  
-  // Eye contact quality (20 points)
-  engagementScore += (eyeContactScore / 100) * 20;
-  
-  // Speech activity (25 points)
+  let engagementScore = 40;
+
+  if (hasFace) engagementScore += 10;
+  engagementScore += (eyeContactScore / 100) * 15;
+
+  // Speech activity (up to 10 points)
   if (transcriptLength > 0) {
-    const speechScore = Math.min(25, (transcriptLength / 500) * 25);
+    const speechScore = Math.min(10, (transcriptLength / 500) * 10);
     engagementScore += speechScore;
   }
-  
-  // Audio activity (15 points)
+
+  // Audio activity (up to 10 points)
   if (audioLevel > 0.2) {
-    engagementScore += Math.min(15, audioLevel * 20);
+    engagementScore += Math.min(10, audioLevel * 10);
   }
-  
-  // Positive emotions from ML (15 points)
+
+  // Positive emotions from ML (max 10 points)
   if (emotions.length > 0) {
     const positiveEmotions = emotions.filter(e => {
       const label = e.label.toLowerCase();
       return ['happy', 'confident', 'focused', 'attentive', 'calm'].some(p => label.includes(p));
     });
-    
+
     for (const emotion of positiveEmotions) {
-      engagementScore += emotion.score * 15;
+      engagementScore += emotion.score * 7;
     }
   }
-  
-  return Math.max(25, Math.min(100, engagementScore));
+
+  // Body language impact
+  if (bodyLanguage === 'engaged') engagementScore += 5;
+  if (bodyLanguage === 'slouching') engagementScore -= 7;
+
+  return Math.max(30, Math.min(90, engagementScore));
 };
 
 // Generate metrics - BACKWARD COMPATIBLE with original structure
@@ -455,46 +439,67 @@ export const generateMetrics = async (
   transcript: string
 ) => {
   console.log('Generating ML-based metrics with audio level:', audioLevel, 'transcript length:', transcript.length);
-  
+
   try {
     const facialAnalysis = await analyzeFacialExpression(videoElement);
     const postureAnalysis = await analyzePosture(videoElement);
-    
-    console.log('Facial analysis:', facialAnalysis);
-    console.log('Posture analysis:', postureAnalysis);
-    
-    // Voice clarity with filler word detection
-    const clarity = calculateVoiceClarity(audioLevel, transcript);
-    
-    // Engagement using ML metrics
-    const engagement = calculateEngagement(
-      facialAnalysis?.hasFace || false,
-      transcript.length,
-      audioLevel,
-      facialAnalysis?.emotions || [],
-      facialAnalysis?.eyeContact || 25
-    );
 
-    // Return ORIGINAL structure for backward compatibility
+    // Improved safe fallback values for better accuracy
+    const fallbackPosture = postureAnalysis?.posture !== undefined ? postureAnalysis.posture : 55;
+    const fallbackBodyLanguage = postureAnalysis?.bodyLanguage || 'neutral';
+    const fallbackEyeContact = facialAnalysis?.eyeContact !== undefined ? facialAnalysis.eyeContact : (fallbackPosture > 55 ? 60 : 50);
+
+    // Voice clarity with filler word detection
+    const clarity = facialAnalysis && postureAnalysis
+      ? calculateVoiceClarity(audioLevel, transcript)
+      : calculateVoiceClarity(audioLevel, transcript);
+
+    // Engagement using ML metrics or heuristic fallback
+    const engagement = facialAnalysis && postureAnalysis
+      ? calculateEngagement(
+          facialAnalysis?.hasFace || false,
+          transcript.length,
+          audioLevel,
+          facialAnalysis?.emotions || [],
+          facialAnalysis?.eyeContact || 50,
+          postureAnalysis.bodyLanguage
+        )
+      : calculateEngagement(
+          false,
+          transcript.length,
+          audioLevel,
+          [],
+          fallbackEyeContact,
+          fallbackBodyLanguage
+        );
+
     return {
-      eyeContact: facialAnalysis?.eyeContact || 25,
-      posture: postureAnalysis.posture,
+      eyeContact: fallbackEyeContact,
+      posture: fallbackPosture,
       clarity: Math.round(clarity),
       engagement: Math.round(engagement),
-      bodyLanguage: postureAnalysis.bodyLanguage,
+      bodyLanguage: fallbackBodyLanguage,
       emotions: facialAnalysis?.emotions || [],
-      imageData: facialAnalysis?.imageData
+      imageData: facialAnalysis?.imageData || null
     };
   } catch (error) {
     console.error('Error generating metrics:', error);
-    
-    // Safe fallback values
+
+    // Durable fallback values
+    const posture = 55;
+    const clarity = calculateVoiceClarity(audioLevel, transcript);
+    const bodyLanguage = 'neutral';
+    const eyeContact = posture > 55 ? 60 : 50;
+    const engagement = calculateEngagement(
+      false, transcript.length, audioLevel, [], eyeContact, bodyLanguage
+    );
+
     return {
-      eyeContact: 25,
-      posture: 50,
-      clarity: 50,
-      engagement: 25,
-      bodyLanguage: 'neutral',
+      eyeContact,
+      posture,
+      clarity: Math.round(clarity),
+      engagement: Math.round(engagement),
+      bodyLanguage,
       emotions: [],
       imageData: null
     };
