@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-//  VisionAnalyzer – MediaPipe + YIN audio + much more accurate posture
+//  VisionAnalyzer – MediaPipe + YIN audio + **much more accurate posture**
 //  Copy-paste this file into your site – it will run without errors.
 // ─────────────────────────────────────────────────────────────────────────────
 import {
