@@ -1,187 +1,370 @@
-// ------------------------------------------------------------
-//  AudioAnalyzer – fixed MPM pitch detection + robust API
-// ------------------------------------------------------------
+// Advanced audio analysis using Web Audio API (browser-based Librosa equivalent)
+// Algorithms: YIN pitch detection, RMS amplitude, SNR, Spectral analysis, ZCR
+
 export interface AudioFeatures {
-  pitch: number;            // Hz (MPM)
-  pitchVariation: number;   // 0-100
-  volume: number;           // dB
-  volumeVariation: number;  // 0-100
-  pace: number;             // words/min (external)
-  clarity: number;          // 0-100
-  energy: number;           // 0-100
-  spectralCentroid: number; // bin index (≈ brightness)
-  zeroCrossingRate: number; // 0-100
-  snr: number;              // dB
-  confidence: number;       // 0-100
+  pitch: number; // Average pitch in Hz (YIN Algorithm)
+  pitchVariation: number; // Variation in pitch (0-100)
+  volume: number; // RMS amplitude in dB
+  volumeVariation: number; // Variation in volume
+  pace: number; // Words per minute
+  clarity: number; // SNR-based clarity score (0-100)
+  energy: number; // Audio energy level
+  spectralCentroid: number; // Brightness of sound
+  zeroCrossingRate: number; // Rate of sign changes
+  snr: number; // Signal-to-Noise Ratio in dB
 }
 
 export class AudioAnalyzer {
-  // ------------------------------------------------------------------
-  //  Private fields
-  // ------------------------------------------------------------------
   private audioContext: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
-  private source: MediaStreamAudioSourceNode | null = null;
-
-  private timeData: Float32Array | null = null;
-  private freqData: Uint8Array | null = null;
-  private floatFreq: Float32Array | null = null;   // for real FFT
-
+  private dataArray: Uint8Array | null = null;
+  private frequencyData: Uint8Array | null = null;
   private pitchHistory: number[] = [];
   private volumeHistory: number[] = [];
   private energyHistory: number[] = [];
-
-  private noiseFloor = -60;
+  private noiseFloor: number = -60;
   private noiseCalibrated = false;
   private calibrationSamples: number[] = [];
+  private readonly VOICE_THRESHOLD_DB = -45; // Minimum dB to consider as voice
+  private readonly MIN_PITCH = 80; // Hz - below this is likely noise
+  private readonly MAX_PITCH = 500; // Hz - above this is likely noise for speech
 
-  private frameCount = 0;
-  private readonly ANALYSIS_INTERVAL = 2; // analyse every N frames
-
-  // ------------------------------------------------------------------
-  //  Constants (tuned for human speech)
-  // ------------------------------------------------------------------
-  private readonly VOICE_THRESHOLD_DB = -50;
-  private readonly MIN_PITCH = 75;
-  private readonly MAX_PITCH = 600;
-  private readonly MPM_CUTOFF = 0.93;
-  private readonly MIN_CONFIDENCE = 0.85;
-
-  // ------------------------------------------------------------------
-  //  PUBLIC API
-  // ------------------------------------------------------------------
+  /**
+   * Initialize the audio analyzer with a media stream
+   * Creates AudioContext, AnalyserNode, and connects the audio pipeline
+   */
   initialize(stream: MediaStream): void {
     try {
-      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({
-        sampleRate: 44100,
-        latencyHint: 'interactive',
+      // Create audio context with optimal sample rate
+      this.audioContext = new AudioContext({ 
+        sampleRate: 48000,
+        latencyHint: 'interactive'
       });
-
+      
+      // Create analyser node with optimal FFT size for speech analysis
       this.analyser = this.audioContext.createAnalyser();
-      this.analyser.fftSize = 4096;               // good low-freq resolution
-      this.analyser.smoothingTimeConstant = 0.85;
-      this.analyser.minDecibels = -100;
+      this.analyser.fftSize = 2048; // Good balance for pitch detection (80-500 Hz)
+      this.analyser.smoothingTimeConstant = 0.8; // Smooth out noise
+      this.analyser.minDecibels = -90;
       this.analyser.maxDecibels = -10;
-
-      this.source = this.audioContext.createMediaStreamSource(stream);
-      this.source.connect(this.analyser);
-
-      const bufLen = this.analyser.fftSize;
-      this.timeData = new Float32Array(bufLen);
-      this.freqData = new Uint8Array(this.analyser.frequencyBinCount);
-      this.floatFreq = new Float32Array(this.analyser.frequencyBinCount);
-
-      this.resetState();
-      console.log('AudioAnalyzer initialized (MPM + HPS)');
-    } catch (e) {
-      console.error('Audio init error:', e);
-      throw new Error('Microphone access denied or unsupported browser');
+      
+      // Connect audio source to analyser
+      const source = this.audioContext.createMediaStreamSource(stream);
+      source.connect(this.analyser);
+      
+      // Initialize data arrays
+      const bufferLength = this.analyser.frequencyBinCount;
+      this.dataArray = new Uint8Array(bufferLength);
+      this.frequencyData = new Uint8Array(bufferLength);
+      
+      // Reset calibration
+      this.noiseCalibrated = false;
+      this.calibrationSamples = [];
+    } catch (error) {
+      console.error('Failed to initialize audio analyzer:', error);
+      throw new Error('Audio initialization failed. Please check microphone permissions.');
     }
   }
 
+  /**
+   * Get current audio features
+   * Returns default values (zeros) when no voice is detected
+   */
   getAudioFeatures(): AudioFeatures {
-    if (!this.analyser || !this.timeData || !this.freqData || !this.floatFreq) {
-      return this.defaultFeatures();
+    if (!this.analyser || !this.dataArray || !this.frequencyData) {
+      return this.getDefaultFeatures();
     }
 
-    // ----------------------------------------------------------------
-    //  Grab fresh data
-    // ----------------------------------------------------------------
-    this.analyser.getFloatTimeDomainData(this.timeData);
-    this.analyser.getByteFrequencyData(this.freqData);
-    this.analyser.getFloatFrequencyData(this.floatFreq);
-
-    const rms = this.rms(this.timeData);
-    const volumeDB = this.toDB(rms);
-
-    // ----------------------------------------------------------------
-    //  Noise-floor calibration (first ~20 quiet frames)
-    // ----------------------------------------------------------------
-    if (!this.noiseCalibrated) this.calibrateNoise(volumeDB);
-
-    const snr = this.noiseCalibrated ? volumeDB - this.noiseFloor : 0;
-
-    // ----------------------------------------------------------------
-    //  Quick voice gate
-    // ----------------------------------------------------------------
-    const voiceGate = volumeDB > this.VOICE_THRESHOLD_DB && snr > 3;
-    if (!voiceGate) return this.defaultFeatures();
-
-    // ----------------------------------------------------------------
-    //  Pitch (MPM) – only every ANALYSIS_INTERVAL frames
-    // ----------------------------------------------------------------
-    let pitch = 0;
-    let confidence = 0;
-
-    this.frameCount++;
-    if (this.frameCount % this.ANALYSIS_INTERVAL === 0) {
-      const mpm = this.mpmPitch(this.timeData);
-      pitch = mpm.pitch;
-      confidence = mpm.confidence;
-
-      if (this.isValidPitch(pitch) && confidence > this.MIN_CONFIDENCE) {
-        this.pitchHistory.push(pitch);
-        if (this.pitchHistory.length > 60) this.pitchHistory.shift();
-      }
-    } else if (this.pitchHistory.length) {
-      pitch = this.pitchHistory[this.pitchHistory.length - 1];
-    }
-
-    // ----------------------------------------------------------------
-    //  Volume & energy history
-    // ----------------------------------------------------------------
-    this.volumeHistory.push(volumeDB);
-    if (this.volumeHistory.length > 60) this.volumeHistory.shift();
-
-    const energy = this.energy(this.freqData);
-    this.energyHistory.push(energy);
-    if (this.energyHistory.length > 40) this.energyHistory.shift();
-
-    // ----------------------------------------------------------------
-    //  Spectral features
-    // ----------------------------------------------------------------
-    const centroid = this.spectralCentroid(this.freqData);
-    const zcr = this.zeroCrossingRate(this.timeData);
-
-    // ----------------------------------------------------------------
-    //  Variations & clarity
-    // ----------------------------------------------------------------
-    const pitchVar = this.variation(this.pitchHistory);
-    const volVarVar = this.variation(this.volumeHistory);
-    const clarity = this.clarityScore(snr, zcr, centroid, energy, confidence);
-
-    return {
-      pitch: Math.round(pitch),
-      pitchVariation: Math.round(Math.min(100, pitchVar * 100)),
-      volume: Math.round(volumeDB),
-      volumeVariation: Math.round(Math.min(100, volVar * 100)),
-      pace: 0, // external
-      clarity: Math.round(Math.max(0, Math.min(100, clarity))),
-      energy: Math.round(energy),
-      spectralCentroid: Math.round(centroid),
-      zeroCrossingRate: Math.round(zcr * 100),
-      snr: Math.round(snr),
-      confidence: Math.round(confidence * 100),
-    };
-  }
-
-  cleanup(): void {
     try {
-      this.audioContext?.close();
-    } catch (_) {}
-    this.audioContext = null;
-    this.analyser = null;
-    this.source = null;
-    this.timeData = null;
-    this.freqData = null;
-    this.floatFreq = null;
-    this.resetState();
+      // Get time domain data (waveform)
+      this.analyser.getByteTimeDomainData(this.dataArray);
+      
+      // Get frequency domain data (spectrum)
+      this.analyser.getByteFrequencyData(this.frequencyData);
+
+      // Calculate volume first to determine if voice is present
+      const volume = this.calculateRMS(this.dataArray);
+      const volumeDB = this.convertToDecibels(volume);
+      
+      // Calibrate noise floor during initial samples
+      if (!this.noiseCalibrated) {
+        this.calibrateNoiseFloor(volumeDB);
+      }
+
+      // Calculate SNR to determine if voice is present
+      const snr = this.calculateSNR(volumeDB);
+      
+      // Check if voice is detected (above threshold and reasonable SNR)
+      const isVoiceDetected = volumeDB > this.VOICE_THRESHOLD_DB && snr > 0;
+
+      // If no voice detected, return zeros
+      if (!isVoiceDetected) {
+        return this.getDefaultFeatures();
+      }
+
+      // Voice detected - calculate all features
+      
+      // 1. Pitch Detection using YIN Algorithm
+      const pitch = this.detectPitchYIN(this.dataArray);
+      const validPitch = this.isValidPitch(pitch) ? pitch : 0;
+      
+      if (validPitch > 0) {
+        this.pitchHistory.push(validPitch);
+        if (this.pitchHistory.length > 50) this.pitchHistory.shift();
+      }
+
+      // 2. Volume tracking
+      this.volumeHistory.push(volumeDB);
+      if (this.volumeHistory.length > 50) this.volumeHistory.shift();
+
+      // 3. Energy calculation
+      const energy = this.calculateEnergy(this.frequencyData);
+      this.energyHistory.push(energy);
+      if (this.energyHistory.length > 30) this.energyHistory.shift();
+
+      // 4. Spectral Centroid (brightness of sound)
+      const spectralCentroid = this.calculateSpectralCentroid(this.frequencyData);
+
+      // 5. Zero Crossing Rate (voice activity indicator)
+      const zcr = this.calculateZeroCrossingRate(this.dataArray);
+
+      // 6. Calculate variations
+      const pitchVariation = this.calculateVariation(this.pitchHistory);
+      const volumeVariation = this.calculateVariation(this.volumeHistory);
+
+      // 7. Calculate clarity score (multi-factor quality metric)
+      const clarity = this.calculateClarity(snr, zcr, spectralCentroid, energy);
+
+      return {
+        pitch: Math.round(validPitch),
+        pitchVariation: Math.round(Math.min(100, pitchVariation * 100)),
+        volume: Math.round(volumeDB * 10) / 10,
+        volumeVariation: Math.round(Math.min(100, volumeVariation * 100)),
+        pace: 0, // Calculated externally from transcript
+        clarity: Math.round(Math.max(0, Math.min(100, clarity))),
+        energy: Math.round(energy),
+        spectralCentroid: Math.round(spectralCentroid),
+        zeroCrossingRate: Math.round(zcr * 1000) / 1000,
+        snr: Math.round(snr * 10) / 10,
+      };
+    } catch (error) {
+      console.error('Error analyzing audio features:', error);
+      return this.getDefaultFeatures();
+    }
   }
 
-  // ------------------------------------------------------------------
-  //  PRIVATE HELPERS
-  // ------------------------------------------------------------------
-  private defaultFeatures(): AudioFeatures {
+  /**
+   * YIN Algorithm for pitch detection
+   * More accurate than basic autocorrelation, especially for low pitches
+   * Steps: 1) Difference function, 2) Cumulative mean normalized difference, 3) Absolute threshold
+   */
+  private detectPitchYIN(buffer: Uint8Array): number {
+    const SIZE = buffer.length;
+    const sampleRate = this.audioContext?.sampleRate || 48000;
+    
+    // Calculate search range based on expected pitch (80-500 Hz)
+    const minPeriod = Math.floor(sampleRate / this.MAX_PITCH);
+    const maxPeriod = Math.floor(sampleRate / this.MIN_PITCH);
+    const searchSize = Math.min(maxPeriod, Math.floor(SIZE / 2));
+    
+    if (searchSize < minPeriod) return 0;
+
+    const threshold = 0.15; // YIN threshold for pitch detection
+    
+    // Step 1: Calculate difference function (squared difference)
+    const difference = new Float32Array(searchSize);
+    for (let tau = 0; tau < searchSize; tau++) {
+      let sum = 0;
+      for (let i = 0; i < searchSize; i++) {
+        const delta = ((buffer[i] - 128) / 128) - ((buffer[i + tau] - 128) / 128);
+        sum += delta * delta;
+      }
+      difference[tau] = sum;
+    }
+    
+    // Step 2: Cumulative mean normalized difference function (CMNDF)
+    const cmndf = new Float32Array(searchSize);
+    cmndf[0] = 1;
+    let runningSum = 0;
+    
+    for (let tau = 1; tau < searchSize; tau++) {
+      runningSum += difference[tau];
+      cmndf[tau] = difference[tau] / (runningSum / tau);
+    }
+    
+    // Step 3: Absolute threshold - find first minimum below threshold
+    let tau = minPeriod;
+    while (tau < searchSize) {
+      if (cmndf[tau] < threshold) {
+        // Find local minimum (parabolic interpolation for sub-sample accuracy)
+        while (tau + 1 < searchSize && cmndf[tau + 1] < cmndf[tau]) {
+          tau++;
+        }
+        
+        // Parabolic interpolation for better accuracy
+        if (tau > 0 && tau < searchSize - 1) {
+          const betterTau = tau + (cmndf[tau + 1] - cmndf[tau - 1]) / (2 * (2 * cmndf[tau] - cmndf[tau - 1] - cmndf[tau + 1]));
+          const pitch = sampleRate / betterTau;
+          return pitch;
+        }
+        
+        return sampleRate / tau;
+      }
+      tau++;
+    }
+    
+    return 0; // No pitch detected
+  }
+
+  /**
+   * Calculate Signal-to-Noise Ratio
+   * Measures how much signal stands out from background noise
+   */
+  private calculateSNR(signalDB: number): number {
+    if (!this.noiseCalibrated) return 0;
+    return signalDB - this.noiseFloor;
+  }
+
+  /**
+   * Calculate RMS (Root Mean Square) amplitude
+   * Standard measure of audio signal strength
+   */
+  private calculateRMS(buffer: Uint8Array): number {
+    let sum = 0;
+    const length = buffer.length;
+    
+    for (let i = 0; i < length; i++) {
+      const normalized = (buffer[i] - 128) / 128;
+      sum += normalized * normalized;
+    }
+    
+    return Math.sqrt(sum / length);
+  }
+
+  /**
+   * Convert RMS amplitude to decibels
+   * dB = 20 * log10(amplitude)
+   */
+  private convertToDecibels(amplitude: number): number {
+    if (amplitude === 0) return -Infinity;
+    return 20 * Math.log10(amplitude);
+  }
+
+  /**
+   * Calculate audio energy from frequency spectrum
+   * Measures overall signal intensity
+   */
+  private calculateEnergy(frequencyData: Uint8Array): number {
+    let sum = 0;
+    const length = frequencyData.length;
+    
+    for (let i = 0; i < length; i++) {
+      const normalized = frequencyData[i] / 255;
+      sum += normalized * normalized;
+    }
+    
+    return Math.sqrt(sum / length) * 100;
+  }
+
+  /**
+   * Calculate Spectral Centroid
+   * Measures the "brightness" of the sound (center of mass of spectrum)
+   * Higher values = brighter/higher frequency content
+   */
+  private calculateSpectralCentroid(frequencyData: Uint8Array): number {
+    let weightedSum = 0;
+    let sum = 0;
+    const length = frequencyData.length;
+    
+    for (let i = 0; i < length; i++) {
+      weightedSum += i * frequencyData[i];
+      sum += frequencyData[i];
+    }
+    
+    return sum === 0 ? 0 : weightedSum / sum;
+  }
+
+  /**
+   * Calculate Zero Crossing Rate
+   * Measures how often the signal changes sign (crosses zero)
+   * Higher ZCR = more noisy/high-frequency content
+   */
+  private calculateZeroCrossingRate(buffer: Uint8Array): number {
+    let crossings = 0;
+    const length = buffer.length;
+    
+    for (let i = 1; i < length; i++) {
+      if ((buffer[i] >= 128 && buffer[i - 1] < 128) || 
+          (buffer[i] < 128 && buffer[i - 1] >= 128)) {
+        crossings++;
+      }
+    }
+    
+    return crossings / length;
+  }
+
+  /**
+   * Calculate coefficient of variation
+   * Normalized measure of dispersion (standard deviation / mean)
+   */
+  private calculateVariation(history: number[]): number {
+    if (history.length < 2) return 0;
+    
+    const mean = history.reduce((a, b) => a + b, 0) / history.length;
+    if (mean === 0) return 0;
+    
+    const variance = history.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / history.length;
+    const stdDev = Math.sqrt(variance);
+    
+    return stdDev / Math.abs(mean);
+  }
+
+  /**
+   * Calculate multi-factor clarity score
+   * Combines SNR, ZCR, spectral centroid, and energy
+   */
+  private calculateClarity(snr: number, zcr: number, spectralCentroid: number, energy: number): number {
+    // SNR contribution (60% weight) - good speech has SNR 10-30 dB
+    const clarityFromSNR = Math.max(0, Math.min(100, ((snr + 10) / 30) * 100));
+    
+    // ZCR contribution (20% weight) - lower is better for speech
+    const clarityFromZCR = Math.max(0, (1 - Math.min(zcr / 0.3, 1)) * 100);
+    
+    // Spectral centroid contribution (10% weight)
+    const clarityFromSpectral = Math.max(0, Math.min(100, (spectralCentroid / 200) * 100));
+    
+    // Energy contribution (10% weight)
+    const clarityFromEnergy = Math.max(0, Math.min(100, energy));
+    
+    return (clarityFromSNR * 0.6 + clarityFromZCR * 0.2 + clarityFromSpectral * 0.1 + clarityFromEnergy * 0.1);
+  }
+
+  /**
+   * Calibrate noise floor from initial quiet samples
+   * Uses median of first 20 samples to avoid outliers
+   */
+  private calibrateNoiseFloor(volumeDB: number): void {
+    this.calibrationSamples.push(volumeDB);
+    
+    if (this.calibrationSamples.length >= 20) {
+      // Use median instead of mean to be robust against outliers
+      const sorted = [...this.calibrationSamples].sort((a, b) => a - b);
+      this.noiseFloor = sorted[Math.floor(sorted.length / 2)];
+      this.noiseCalibrated = true;
+    }
+  }
+
+  /**
+   * Validate pitch is in expected human speech range
+   */
+  private isValidPitch(pitch: number): boolean {
+    return pitch >= this.MIN_PITCH && pitch <= this.MAX_PITCH;
+  }
+
+  /**
+   * Return default features (all zeros) when no voice detected
+   */
+  private getDefaultFeatures(): AudioFeatures {
     return {
       pitch: 0,
       pitchVariation: 0,
@@ -193,181 +376,32 @@ export class AudioAnalyzer {
       spectralCentroid: 0,
       zeroCrossingRate: 0,
       snr: 0,
-      confidence: 0,
     };
   }
 
-  private resetState(): void {
+  /**
+   * Clean up audio resources
+   * Call this when stopping audio analysis
+   */
+  cleanup(): void {
+    try {
+      if (this.audioContext && this.audioContext.state !== 'closed') {
+        this.audioContext.close();
+      }
+    } catch (error) {
+      console.error('Error closing audio context:', error);
+    }
+    
+    this.audioContext = null;
+    this.analyser = null;
+    this.dataArray = null;
+    this.frequencyData = null;
     this.pitchHistory = [];
     this.volumeHistory = [];
     this.energyHistory = [];
     this.noiseFloor = -60;
     this.noiseCalibrated = false;
     this.calibrationSamples = [];
-    this.frameCount = 0;
-  }
-
-  // -------------------------- MPM Pitch --------------------------
-  private mpmPitch(buffer: Float32Array): { pitch: number; confidence: number } {
-    const sampleRate = this.audioContext!.sampleRate;
-    const N = buffer.length;
-
-    const minTau = Math.floor(sampleRate / this.MAX_PITCH);
-    const maxTau = Math.floor(sampleRate / this.MIN_PITCH);
-    const searchLen = Math.min(maxTau, Math.floor(N / 2));
-
-    if (searchLen < minTau) return { pitch: 0, confidence: 0 };
-
-    // ---- NSDF (Normalised Square Difference) ----
-    const nsdf = new Float32Array(searchLen);
-    let energy0 = 0;
-    for (let i = 0; i < N; i++) energy0 += buffer[i] * buffer[i];
-
-    for (let tau = 0; tau < searchLen; tau++) {
-      let acf = 0,
-        energy1 = 0;
-      for (let i = 0; i < N - tau; i++) {
-        acf += buffer[i] * buffer[i + tau];
-        energy1 += buffer[i + tau] * buffer[i + tau];
-      }
-      const denom = Math.sqrt(energy0 * energy1);
-      nsdf[tau] = denom > 0 ? (2 * acf) / denom : 0;
-    }
-
-    // ---- Find the strongest positive peak above cutoff ----
-    let bestTau = 0;
-    let bestVal = 0;
-    for (let tau = minTau; tau < searchLen; tau++) {
-      if (nsdf[tau] > bestVal && nsdf[tau] >= this.MPM_CUTOFF) {
-        bestVal = nsdf[tau];
-        bestTau = tau;
-      }
-    }
-    if (bestVal === 0) return { pitch: 0, confidence: 0 };
-
-    // ---- Parabolic interpolation ----
-    if (bestTau > 0 && bestTau < searchLen - 1) {
-      const a = nsdf[bestTau - 1];
-      const b = nsdf[bestTau];
-      const c = nsdf[bestTau + 1];
-      const p = 0.5 * (a - c) / (a - 2 * b + c);
-      bestTau += p;
-    }
-
-    const pitch = sampleRate / bestTau;
-
-    // ---- HPS validation (quick check on the FFT) ----
-    const hps = this.hpsValidate(pitch);
-
-    const confidence = Math.min(1, (bestVal + hps) / 2);
-    return { pitch: this.isValidPitch(pitch) ? pitch : 0, confidence };
-  }
-
-  /** Simple HPS on the *float* frequency data */
-  private hpsValidate(pitch: number): number {
-    if (!this.floatFreq || pitch === 0) return 0;
-    const bin = Math.round((pitch * this.floatFreq.length) / this.audioContext!.sampleRate);
-    if (bin >= this.floatFreq.length) return 0;
-
-    let fund = this.floatFreq[bin] ?? -Infinity;
-    if (!isFinite(fund)) fund = -Infinity;
-
-    let harmSum = 0;
-    let harmCnt = 0;
-    for (let h = 2; h <= 5; h++) {
-      const hi = bin * h;
-      if (hi < this.floatFreq.length) {
-        harmSum += this.floatFreq[hi];
-        harmCnt++;
-      }
-    }
-    const avgHarm = harmCnt ? harmSum / harmCnt : 0;
-    return fund > -Infinity ? Math.min(1, avgHarm / (fund + 1e-9)) : 0;
-  }
-
-  // -------------------------- Basic features --------------------------
-  private rms(buf: Float32Array): number {
-    let sum = 0;
-    for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
-    return Math.sqrt(sum / buf.length);
-  }
-
-  private toDB(amp: number): number {
-    return amp > 0 ? 20 * Math.log10(amp) : -Infinity;
-  }
-
-  private energy(freq: Uint8Array): number {
-    let sum = 0;
-    const limit = Math.min(512, freq.length);
-    for (let i = 0; i < limit; i++) {
-      const n = freq[i] / 255;
-      sum += n * n;
-    }
-    return Math.sqrt(sum / limit) * 100;
-  }
-
-  private spectralCentroid(freq: Uint8Array): number {
-    let num = 0,
-      den = 0;
-    for (let i = 0; i < freq.length; i++) {
-      const m = freq[i];
-      num += i * m;
-      den += m;
-    }
-    return den ? num / den : 0;
-  }
-
-  private zeroCrossingRate(buf: Float32Array): number {
-    let crosses = 0;
-    for (let i = 1; i < buf.length; i++) {
-      if ((buf[i] >= 0 && buf[i - 1] < 0) || (buf[i] < 0 && buf[i - 1] >= 0)) crosses++;
-    }
-    return crosses / buf.length;
-  }
-
-  private variation(hist: number[]): number {
-    if (hist.length < 2) return 0;
-    const mean = hist.reduce((a, b) => a + b, 0) / hist.length;
-    if (mean === 0) return 0;
-    const variance =
-      hist.reduce((s, v) => s + (v - mean) * (v - mean), 0) / hist.length;
-    return Math.sqrt(variance) / Math.abs(mean);
-  }
-
-  private clarityScore(
-    snr: number,
-    zcr: number,
-    centroid: number,
-    energy: number,
-    conf: number
-  ): number {
-    const cSNR = Math.max(0, Math.min(100, ((snr + 5) / 25) * 100));
-    const cZCR = Math.max(0, (1 - Math.min(zcr / 0.25, 1)) * 100);
-    const cCent = Math.max(0, Math.min(100, (centroid / 150) * 100));
-    const cEnergy = Math.max(0, Math.min(100, energy));
-    const cConf = conf * 100;
-
-    return (
-      cSNR * 0.50 +
-      cZCR * 0.15 +
-      cCent * 0.10 +
-      cEnergy * 0.10 +
-      cConf * 0.15
-    );
-  }
-
-  private calibrateNoise(db: number): void {
-    if (!isFinite(db)) return;
-    this.calibrationSamples.push(db);
-    if (this.calibrationSamples.length >= 20) {
-      const sorted = [...this.calibrationSamples].sort((a, b) => a - b);
-      this.noiseFloor = sorted[Math.floor(sorted.length / 2)];
-      this.noiseCalibrated = true;
-      console.log(`Noise floor calibrated: ${this.noiseFloor.toFixed(1)} dB`);
-    }
-  }
-
-  private isValidPitch(p: number): boolean {
-    return isFinite(p) && p >= this.MIN_PITCH && p <= this.MAX_PITCH;
   }
 }
+
