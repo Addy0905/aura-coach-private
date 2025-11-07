@@ -13,17 +13,17 @@ const Hero = () => {
       <div className="container relative z-10 px-4 mx-auto text-center">
         <div className="inline-flex items-center gap-2 px-4 py-2 mb-6 rounded-full bg-primary/10 border border-primary/20 animate-fade-in">
           <Sparkles className="w-4 h-4 text-primary" />
-          <span className="text-sm text-muted-foreground">AI-Powered Presentation Coaching</span>
+          <span className="text-sm text-muted-foreground">AI-Powered Communication Coaching</span>
         </div>
 
         <h1 className="text-5xl md:text-7xl font-bold mb-6 animate-fade-in bg-gradient-primary bg-clip-text text-transparent">
-          Master Your Presentations
+          Master Your Communication
           <br />
           with AI Intelligence
         </h1>
 
         <p className="text-xl md:text-2xl text-muted-foreground mb-8 max-w-3xl mx-auto animate-fade-in" style={{ animationDelay: "0.2s" }}>
-          Advanced multi-modal analysis combining facial expressions, voice quality, content analysis, and body language to transform your public speaking skills.
+          Advanced multi-modal AI analysis for job seekers, professionals, speakers, sales teams, remote workers, and students. Real-time feedback on facial expressions, voice quality, content analysis, and body language.
         </p>
 
         <div className="flex flex-col sm:flex-row gap-4 justify-center animate-fade-in" style={{ animationDelay: "0.4s" }}>

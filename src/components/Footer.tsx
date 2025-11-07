@@ -10,10 +10,10 @@ const Footer = () => {
               <div className="w-8 h-8 rounded-lg bg-gradient-primary flex items-center justify-center">
                 <Presentation className="w-5 h-5 text-white" />
               </div>
-              <span className="font-bold text-foreground">AI Presentation Coach</span>
+              <span className="font-bold text-foreground">Persona.AI</span>
             </div>
             <p className="text-sm text-muted-foreground">
-              Transform your public speaking with AI-powered coaching and real-time feedback.
+              Transform your communication skills with AI-powered coaching and real-time feedback.
             </p>
           </div>
 
@@ -54,7 +54,7 @@ const Footer = () => {
         </div>
 
         <div className="pt-8 border-t border-border text-center text-sm text-muted-foreground">
-          <p>&copy; 2025 AI Presentation Coach. Privacy-first, self-hosted, and open source.</p>
+          <p>&copy; 2025 Persona.AI. Privacy-first, self-hosted, and open source.</p>
         </div>
       </div>
     </footer>

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Camera, Mic, MicOff, Video, VideoOff, Square, ArrowLeft, Loader2 } from "lucide-react";
@@ -11,10 +11,15 @@ import { SpeechRecognitionService, SpeechAnalyzer } from "@/lib/speechRecognitio
 import { ContentAnalyzer } from "@/lib/contentAnalysis";
 import { FusionAlgorithm } from "@/lib/fusionAlgorithm";
 import type { RawMetrics } from "@/lib/fusionAlgorithm";
+import CategorySelection, { type UserCategory } from "@/components/CategorySelection";
 
 const Practice = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { toast } = useToast();
+  const [selectedCategory, setSelectedCategory] = useState<UserCategory | null>(
+    (location.state?.category as UserCategory) || null
+  );
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -256,7 +261,7 @@ const Practice = () => {
           };
 
           // Apply multi-modal fusion algorithm with temporal smoothing
-          fusionAlgorithmRef.current.setContext('presentation');
+          fusionAlgorithmRef.current.setContext(selectedCategory || 'students');
           const fusedMetrics = fusionAlgorithmRef.current.fuse(rawMetrics);
           
           // Update UI metrics with fused, smoothed values (boosted by content analysis)
@@ -495,13 +500,19 @@ const Practice = () => {
     
     // Navigate to results with complete data
     setTimeout(() => {
+      const contentMetrics = finalTranscript.length > 20 
+        ? contentAnalyzerRef.current.analyzeContent(finalTranscript)
+        : null;
+      
       navigate("/results", { 
         state: { 
           duration: recordingTime,
           metrics: metrics,
           transcript: finalTranscript,
           speechAnalysis: finalAnalysis,
+          contentAnalysis: contentMetrics,
           feedback: feedback,
+          category: selectedCategory,
         } 
       });
     }, 2000);
@@ -512,6 +523,11 @@ const Practice = () => {
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
+
+  // Show category selection if not selected
+  if (!selectedCategory) {
+    return <CategorySelection onSelect={setSelectedCategory} />;
+  }
 
   return (
     <div className="min-h-screen bg-gradient-hero p-4">

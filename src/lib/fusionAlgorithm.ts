@@ -42,7 +42,7 @@ export interface FusedMetrics {
 }
 
 export interface ContextWeights {
-  professional: {
+  "job-seekers": {
     eyeContact: number;
     posture: number;
     bodyLanguage: number;
@@ -51,7 +51,7 @@ export interface ContextWeights {
     speechClarity: number;
     contentEngagement: number;
   };
-  presentation: {
+  "business-professionals": {
     eyeContact: number;
     posture: number;
     bodyLanguage: number;
@@ -60,7 +60,34 @@ export interface ContextWeights {
     speechClarity: number;
     contentEngagement: number;
   };
-  casual: {
+  "public-speakers": {
+    eyeContact: number;
+    posture: number;
+    bodyLanguage: number;
+    facialExpression: number;
+    voiceQuality: number;
+    speechClarity: number;
+    contentEngagement: number;
+  };
+  "sales-service": {
+    eyeContact: number;
+    posture: number;
+    bodyLanguage: number;
+    facialExpression: number;
+    voiceQuality: number;
+    speechClarity: number;
+    contentEngagement: number;
+  };
+  "remote-workers": {
+    eyeContact: number;
+    posture: number;
+    bodyLanguage: number;
+    facialExpression: number;
+    voiceQuality: number;
+    speechClarity: number;
+    contentEngagement: number;
+  };
+  students: {
     eyeContact: number;
     posture: number;
     bodyLanguage: number;
@@ -71,39 +98,66 @@ export interface ContextWeights {
   };
 }
 
-// Weight configurations for different contexts
+// Weight configurations for different user categories
 const CONTEXT_WEIGHTS: ContextWeights = {
-  professional: {
-    eyeContact: 0.20,
-    posture: 0.15,
-    bodyLanguage: 0.10,
-    facialExpression: 0.15,
-    voiceQuality: 0.15,
-    speechClarity: 0.15,
-    contentEngagement: 0.10,
+  "job-seekers": {
+    eyeContact: 0.25,        // Critical for interviews
+    posture: 0.20,           // Shows confidence
+    bodyLanguage: 0.15,      // Professional demeanor
+    facialExpression: 0.15,  // Authenticity
+    voiceQuality: 0.10,
+    speechClarity: 0.10,
+    contentEngagement: 0.05, // Less critical for Q&A
   },
-  presentation: {
-    eyeContact: 0.25,
+  "business-professionals": {
+    eyeContact: 0.20,
     posture: 0.15,
     bodyLanguage: 0.15,
     facialExpression: 0.10,
-    voiceQuality: 0.10,
-    speechClarity: 0.15,
-    contentEngagement: 0.10,
-  },
-  casual: {
-    eyeContact: 0.15,
-    posture: 0.10,
-    bodyLanguage: 0.10,
-    facialExpression: 0.20,
     voiceQuality: 0.15,
     speechClarity: 0.15,
-    contentEngagement: 0.15,
+    contentEngagement: 0.10, // Balanced approach
+  },
+  "public-speakers": {
+    eyeContact: 0.25,        // Audience connection
+    posture: 0.15,
+    bodyLanguage: 0.20,      // Stage presence
+    facialExpression: 0.10,
+    voiceQuality: 0.15,      // Projection matters
+    speechClarity: 0.10,
+    contentEngagement: 0.05,
+  },
+  "sales-service": {
+    eyeContact: 0.20,
+    posture: 0.10,
+    bodyLanguage: 0.15,
+    facialExpression: 0.20,  // Empathy & rapport
+    voiceQuality: 0.15,      // Tone matters
+    speechClarity: 0.15,
+    contentEngagement: 0.05,
+  },
+  "remote-workers": {
+    eyeContact: 0.30,        // Camera presence critical
+    posture: 0.15,           // Frame visibility
+    bodyLanguage: 0.10,      // Limited visibility
+    facialExpression: 0.15,
+    voiceQuality: 0.15,      // Audio quality matters
+    speechClarity: 0.10,
+    contentEngagement: 0.05,
+  },
+  students: {
+    eyeContact: 0.20,
+    posture: 0.15,
+    bodyLanguage: 0.15,
+    facialExpression: 0.15,
+    voiceQuality: 0.10,
+    speechClarity: 0.15,     // Articulation practice
+    contentEngagement: 0.10, // Learning to engage
   },
 };
 
 export class FusionAlgorithm {
-  private context: keyof ContextWeights = 'presentation';
+  private context: keyof ContextWeights = 'students';
   private previousFrame: FusedMetrics | null = null;
   private readonly SMOOTHING_ALPHA = 0.7; // Exponential smoothing (70% current, 30% previous)
 
