@@ -577,7 +577,7 @@ export class VisionAnalyzer {
         movementPatterns: [],
       },
       overallConfidence: 0,
-      timestamp: 0,
+      timestamp: Date.now(),
     };
   }
 

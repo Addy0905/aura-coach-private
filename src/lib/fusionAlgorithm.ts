@@ -104,9 +104,8 @@ const CONTEXT_WEIGHTS: ContextWeights = {
 
 export class FusionAlgorithm {
   private context: keyof ContextWeights = 'presentation';
-  private history: FusedMetrics[] = [];
-  private readonly HISTORY_SIZE = 10; // For temporal smoothing (last 10 frames)
-  private readonly MIN_SCORE = 25; // Minimum threshold
+  private previousFrame: FusedMetrics | null = null;
+  private readonly SMOOTHING_ALPHA = 0.7; // Exponential smoothing (70% current, 30% previous)
 
   setContext(context: keyof ContextWeights) {
     this.context = context;
@@ -192,25 +191,38 @@ export class FusionAlgorithm {
     );
   }
 
-  // Step 4: Calculate confidence score
+  // Step 4: Calculate confidence score (Bayesian-style)
   private calculateConfidence(raw: RawMetrics): number {
     let confidence = 100;
     
     // Reduce confidence if critical metrics are missing or low quality
-    if (raw.eyeContact < 10) confidence -= 20; // No face detected
-    if (raw.volume < -50) confidence -= 15; // Too quiet
+    if (raw.eyeContact < 5 && raw.postureScore < 5) confidence -= 20; // No person detected
+    if (raw.volume < -55 && raw.energy < 5) confidence -= 15; // No audio
     if (raw.wordsPerMinute === 0) confidence -= 10; // No speech
     if (raw.emotionConfidence < 0.3) confidence -= 10; // Uncertain emotion
     
     return Math.max(0, Math.min(100, confidence));
   }
+  
+  // Zero-state detection (Null Hypothesis Testing)
+  private isZeroState(raw: RawMetrics): boolean {
+    // No person detected AND no audio/speech
+    const noVision = raw.eyeContact < 5 && raw.postureScore < 5;
+    const noAudio = raw.volume < -55 && raw.energy < 5;
+    const noSpeech = raw.wordsPerMinute === 0;
+    
+    return (noVision && noAudio) || (noVision && noSpeech);
+  }
 
-  // Step 5: Temporal smoothing using moving average
-  private applyTemporalSmoothing(current: FusedMetrics): FusedMetrics {
-    if (this.history.length === 0) {
+  // Step 5: Temporal smoothing using Exponential Moving Average (Kalman-inspired)
+  private applyTemporalSmoothing(current: FusedMetrics, confidence: number): FusedMetrics {
+    if (!this.previousFrame) {
       return current;
     }
 
+    // Adaptive alpha based on confidence (lower confidence = more smoothing)
+    const adaptiveAlpha = this.SMOOTHING_ALPHA * (confidence / 100);
+    
     const smoothed = { ...current };
     const keys: (keyof FusedMetrics)[] = [
       'eyeContact', 'posture', 'bodyLanguage', 'facialExpression',
@@ -218,8 +230,10 @@ export class FusionAlgorithm {
     ];
 
     for (const key of keys) {
-      const values = this.history.map(h => h[key] as number).concat(current[key] as number);
-      smoothed[key] = this.movingAverage(values) as any;
+      const currentVal = current[key] as number;
+      const previousVal = this.previousFrame[key] as number;
+      // EMA: smoothed = alpha * current + (1 - alpha) * previous
+      smoothed[key] = Math.round(adaptiveAlpha * currentVal + (1 - adaptiveAlpha) * previousVal) as any;
     }
 
     return smoothed;
@@ -227,6 +241,23 @@ export class FusionAlgorithm {
 
   // Main fusion method
   fuse(raw: RawMetrics): FusedMetrics {
+    // Zero-state detection: Return all zeros if no input detected
+    if (this.isZeroState(raw)) {
+      const zeroMetrics: FusedMetrics = {
+        eyeContact: 0,
+        posture: 0,
+        bodyLanguage: 0,
+        facialExpression: 0,
+        voiceQuality: 0,
+        speechClarity: 0,
+        contentEngagement: 0,
+        overallScore: 0,
+        confidence: 0,
+      };
+      this.previousFrame = zeroMetrics;
+      return zeroMetrics;
+    }
+    
     // Step 1: Normalize
     const normalized = this.normalizeMetrics(raw);
     
@@ -239,27 +270,24 @@ export class FusionAlgorithm {
     // Step 4: Calculate confidence
     const confidence = this.calculateConfidence(raw);
     
-    // Create fused metrics
+    // Create fused metrics (round to integers)
     const fused: FusedMetrics = {
-      eyeContact: this.enforceMinimum(features.eyeContact),
-      posture: this.enforceMinimum(features.posture),
-      bodyLanguage: this.enforceMinimum(features.bodyLanguage),
-      facialExpression: this.enforceMinimum(features.facialExpression),
-      voiceQuality: this.enforceMinimum(features.voiceQuality),
-      speechClarity: this.enforceMinimum(features.speechClarity),
-      contentEngagement: this.enforceMinimum(features.contentEngagement),
-      overallScore: this.enforceMinimum(overallScore),
-      confidence: confidence,
+      eyeContact: Math.round(features.eyeContact),
+      posture: Math.round(features.posture),
+      bodyLanguage: Math.round(features.bodyLanguage),
+      facialExpression: Math.round(features.facialExpression),
+      voiceQuality: Math.round(features.voiceQuality),
+      speechClarity: Math.round(features.speechClarity),
+      contentEngagement: Math.round(features.contentEngagement),
+      overallScore: Math.round(overallScore),
+      confidence: Math.round(confidence),
     };
     
     // Step 5: Apply temporal smoothing
-    const smoothed = this.applyTemporalSmoothing(fused);
+    const smoothed = this.applyTemporalSmoothing(fused, confidence);
     
-    // Add to history
-    this.history.push(smoothed);
-    if (this.history.length > this.HISTORY_SIZE) {
-      this.history.shift();
-    }
+    // Store for next iteration
+    this.previousFrame = smoothed;
     
     return smoothed;
   }
@@ -269,9 +297,6 @@ export class FusionAlgorithm {
     return Math.max(min, Math.min(max, value));
   }
 
-  private enforceMinimum(value: number): number {
-    return Math.max(this.MIN_SCORE, Math.round(value));
-  }
 
   private normalizeVolume(volumeDB: number): number {
     // Convert dB (-60 to 0) to 0-100 scale
@@ -311,17 +336,7 @@ export class FusionAlgorithm {
     return weightedSum / totalWeight;
   }
 
-  private movingAverage(values: number[]): number {
-    if (values.length === 0) return 0;
-    const sum = values.reduce((a, b) => a + b, 0);
-    return sum / values.length;
-  }
-
   reset() {
-    this.history = [];
-  }
-
-  getHistory(): FusedMetrics[] {
-    return [...this.history];
+    this.previousFrame = null;
   }
 }

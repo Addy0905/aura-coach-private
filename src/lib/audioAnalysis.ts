@@ -17,8 +17,8 @@ export interface AudioFeatures {
 export class AudioAnalyzer {
   private audioContext: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
-  private dataArray: Uint8Array | null = null;
-  private frequencyData: Uint8Array | null = null;
+  private dataArray: Uint8Array<ArrayBuffer> | null = null;
+  private frequencyData: Uint8Array<ArrayBuffer> | null = null;
   private pitchHistory: number[] = [];
   private volumeHistory: number[] = [];
   private energyHistory: number[] = [];
@@ -54,8 +54,10 @@ export class AudioAnalyzer {
       
       // Initialize data arrays
       const bufferLength = this.analyser.frequencyBinCount;
-      this.dataArray = new Uint8Array(bufferLength);
-      this.frequencyData = new Uint8Array(bufferLength);
+      const buffer = new ArrayBuffer(bufferLength);
+      this.dataArray = new Uint8Array(buffer);
+      const buffer2 = new ArrayBuffer(bufferLength);
+      this.frequencyData = new Uint8Array(buffer2);
       
       // Reset calibration
       this.noiseCalibrated = false;
@@ -138,14 +140,14 @@ export class AudioAnalyzer {
       return {
         pitch: Math.round(validPitch),
         pitchVariation: Math.round(Math.min(100, pitchVariation * 100)),
-        volume: Math.round(volumeDB * 10) / 10,
+        volume: Math.round(volumeDB),
         volumeVariation: Math.round(Math.min(100, volumeVariation * 100)),
         pace: 0, // Calculated externally from transcript
         clarity: Math.round(Math.max(0, Math.min(100, clarity))),
         energy: Math.round(energy),
         spectralCentroid: Math.round(spectralCentroid),
-        zeroCrossingRate: Math.round(zcr * 1000) / 1000,
-        snr: Math.round(snr * 10) / 10,
+        zeroCrossingRate: Math.round(zcr * 100),
+        snr: Math.round(snr),
       };
     } catch (error) {
       console.error('Error analyzing audio features:', error);
