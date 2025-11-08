@@ -111,9 +111,18 @@ export class MLAudioAnalyzer {
 
       // ---- Voice Activity Detection (VAD) ----
       const energy = this.calculateEnergy(this.frequencyData);
-      const isVoice = volumeDB > -50 && energy > 10;
+      const spectralCentroid = this.calculateSpectralCentroid(this.frequencyData);
+      
+      // Stricter VAD: volume + energy + spectral content
+      const isVoice = volumeDB > -45 && energy > 15 && spectralCentroid > 10;
 
-      if (!isVoice) return this.defaultFeatures();
+      if (!isVoice) {
+        // Clear histories when silence detected
+        this.pitchHistory = [];
+        this.volumeHistory = [];
+        this.clarityHistory = [];
+        return this.defaultFeatures();
+      }
 
       // ---- ML-Enhanced Pitch Detection ----
       const pitch = this.detectPitchAutocorrelation(this.dataArray);
@@ -126,8 +135,7 @@ export class MLAudioAnalyzer {
       this.volumeHistory.push(volumeDB);
       if (this.volumeHistory.length > this.HISTORY_SIZE) this.volumeHistory.shift();
 
-      // ---- Spectral Features ----
-      const spectralCentroid = this.calculateSpectralCentroid(this.frequencyData);
+      // ---- Spectral Features (already calculated above for VAD) ----
       const zcr = this.calculateZeroCrossingRate(this.dataArray);
 
       // ---- SNR (Estimated) ----
@@ -244,10 +252,10 @@ export class MLAudioAnalyzer {
       energyScore * 0.2
     );
 
-    // Smooth with history
-    if (this.clarityHistory.length > 0) {
+    // Only smooth with history if we have stable voice detection (5+ frames)
+    if (this.clarityHistory.length >= 5) {
       const avgHistory = this.clarityHistory.reduce((a, b) => a + b, 0) / this.clarityHistory.length;
-      clarity = clarity * 0.7 + avgHistory * 0.3;
+      clarity = clarity * 0.8 + avgHistory * 0.2; // Less aggressive smoothing
     }
 
     return clarity;
@@ -257,6 +265,9 @@ export class MLAudioAnalyzer {
   // VOICE QUALITY SCORE
   // ========================================================
   private calculateVoiceQuality(clarity: number, snr: number, energy: number): number {
+    // Return 0 if any component is too low (indicates silence/noise)
+    if (clarity < 10 || snr < 5 || energy < 15) return 0;
+
     // Combines multiple factors for overall voice quality
     const clarityWeight = 0.5;
     const snrWeight = 0.3;
