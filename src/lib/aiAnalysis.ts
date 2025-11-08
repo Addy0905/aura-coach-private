@@ -76,7 +76,20 @@ export const initializeAudioAnalyzer = (stream: MediaStream) => {
 //  GET CURRENT AUDIO FEATURES (used for clarity)
 // ---------------------------------------------------------------------
 const getAudioFeatures = (): AudioFeatures => {
-  if (!audioAnalyzer) return AudioAnalyzer.prototype.def(); // default zeros
+  if (!audioAnalyzer) {
+    return {
+      pitch: 0,
+      pitchVariation: 0,
+      volume: 0,
+      volumeVariation: 0,
+      pace: 0,
+      clarity: 0,
+      energy: 0,
+      spectralCentroid: 0,
+      zeroCrossingRate: 0,
+      snr: 0,
+    };
+  }
   return audioAnalyzer.getAudioFeatures();
 };
 
@@ -256,7 +269,11 @@ export const analyzePosture = async (videoElement: HTMLVideoElement) => {
       for (let x = 0; x < canvas.width; x++) {
         const i = (y * canvas.width + x) * 4;
         const b = (img[i] + img[i + 1] + img[i + 2]) / 3;
-        (y < mid ? top : bot) += b;
+        if (y < mid) {
+          top += b;
+        } else {
+          bot += b;
+        }
       }
     }
     const ratio = top / (top + bot);

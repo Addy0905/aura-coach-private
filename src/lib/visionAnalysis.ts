@@ -48,7 +48,7 @@ export class VisionAnalyzer {
   private gestureRecognizer: GestureRecognizer | null = null;
   private audioContext: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
-  private mediaSource: MediaElementSourceNode | null = null;
+  private mediaSource: MediaElementAudioSourceNode | null = null;
   private isInitialized = false;
   private previousFaceLandmarks: any = null;
   private previousPoseLandmarks: any = null;

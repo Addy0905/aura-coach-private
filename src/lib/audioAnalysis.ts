@@ -54,8 +54,10 @@ export class AudioAnalyzer {
       source.connect(this.analyser);
 
       const bufferLength = this.analyser.frequencyBinCount;
-      this.dataArray = new Uint8Array(bufferLength);
-      this.frequencyData = new Uint8Array(bufferLength);
+      const arrayBuffer = new ArrayBuffer(bufferLength);
+      const freqArrayBuffer = new ArrayBuffer(bufferLength);
+      this.dataArray = new Uint8Array(arrayBuffer);
+      this.frequencyData = new Uint8Array(freqArrayBuffer);
 
       // reset calibration
       this.noiseCalibrated = false;
@@ -75,8 +77,10 @@ export class AudioAnalyzer {
     }
 
     try {
-      this.analyser.getByteTimeDomainData(this.dataArray);
-      this.analyser.getByteFrequencyData(this.frequencyData);
+      // @ts-ignore - Web Audio API types are compatible
+      this.analyser.getByteTimeDomainData(this.dataArray!);
+      // @ts-ignore - Web Audio API types are compatible
+      this.analyser.getByteFrequencyData(this.frequencyData!);
 
       const rms = this.calculateRMS(this.dataArray);
       const volumeDB = this.convertToDecibels(rms);
